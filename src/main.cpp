@@ -8,9 +8,5 @@ struct Test {
 
 int main(int argc, char** argv) {
   spdlog::set_level(spdlog::level::debug);
-
-  pxm::tool::ToolRegistry registry;
-  registry.registerTool<Test>("test", "", [](const Test &test){return "";});
-
   return 0;
 }

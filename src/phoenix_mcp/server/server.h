@@ -6,9 +6,12 @@
 #include <memory>
 #include <string>
 
+#include <spdlog/spdlog.h>
+
 #include "../constants/constants.hpp"
 #include "../transport/abstract_transport.h"
 #include "../tool_registry/tool_registry.h"
+
 
 namespace cnt = pxm::constants;
 namespace cnt_t = pxm::constants::transport;
@@ -44,6 +47,7 @@ public:
   int start_server();
 
 private:
+  bool initialized_ = false;
   std::string name_;                                   ///< Server name
   std::string desc_;                                   ///< Server description
   std::unique_ptr<AbstractTransport> transport_;       ///< Transport mechanism for communication

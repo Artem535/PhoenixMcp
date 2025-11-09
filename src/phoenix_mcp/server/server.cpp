@@ -16,13 +16,17 @@ Server::Server(std::string name, std::string desc,
 
 int Server::start_server() {
   try {
+    spdlog::info("Server::start_server| Start server");
     start_server_();
   } catch (std::exception& e) {
-    std::cout << e.what() << std::endl;
+    spdlog::error("Server::start_server| Error: {}", e.what());
     return cnt::exit::Error;
   }
+
+  spdlog::info("Server::start_server| Server stopped");
   return cnt::exit::Success;
 }
+
 
 void Server::start_server_() {
   while (true) {
