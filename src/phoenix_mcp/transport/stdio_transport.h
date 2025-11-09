@@ -4,9 +4,11 @@
 #pragma once
 #include "abstract_transport.h"
 
+namespace pxm::server {
 class StdioTransport final : public AbstractTransport {
 public:
   std::string read_msg() override;
 
   void write_msg(const std::string& msg) override;
 };
+}

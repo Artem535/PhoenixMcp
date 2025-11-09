@@ -256,7 +256,7 @@ struct Tool {
   /// @brief Optional tool description
   rfl::Rename<"description", std::optional<std::string> > description;
   /// @brief The input schema for the tool
-  rfl::Rename<"inputShema", InputSchema> inputSchema;
+  rfl::Rename<"inputSchema", InputSchema> inputSchema;
 };
 
 /// @brief Structure for requesting a list of tools

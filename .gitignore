@@ -108,5 +108,6 @@ kcachegrind
 *.dt
 *.dt.*
 
-
+# CMake
+CMakeLists.txt
 /cmake-build-debug/
