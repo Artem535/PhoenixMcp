@@ -1,0 +1,10 @@
+add_rules("mode.release", "mode.debug")
+
+set_languages("c++20")
+
+add_requires("vcpkg::reflectcpp")
+
+target("phoenix_mcp")
+	set_kind("static")
+	add_files("*/*.cpp", {public=true})
+	add_packages("vcpkg::reflectcpp")

@@ -1,0 +1,112 @@
+# Build directories
+build/
+build.*/
+.xmake/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# Xmake configuration
+.xmake.conf
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+*.ko
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+phoenix_mcp  # Your binary name
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Core dumps
+core
+core.*
+*.core
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.sublime-project
+.sublime-workspace
+*.kdev4
+
+# Clangd
+.clangd/
+cache/
+
+# Python (if you add scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+
+# MCP / Claude Desktop local configs (if placed in repo by mistake)
+.claude/
+claude_desktop_config.json
+
+# Coverage
+*.gcno
+*.gcda
+*.gcov
+lcov.info
+
+# Profile
+perf.data
+perf.data.*
+callgrind.*
+kcachegrind
+
+# Dont track
+*.dt
+*.dt.*
+
+
+/cmake-build-debug/
