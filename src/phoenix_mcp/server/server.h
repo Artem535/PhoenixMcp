@@ -5,8 +5,10 @@
 #pragma once
 #include <memory>
 #include <string>
+
 #include "../constants/constants.hpp"
 #include "../transport/abstract_transport.h"
+#include "../tool_registry/tool_registry.h"
 
 namespace cnt = pxm::constants;
 namespace cnt_t = pxm::constants::transport;
@@ -45,6 +47,7 @@ private:
   std::string name_;                                   ///< Server name
   std::string desc_;                                   ///< Server description
   std::unique_ptr<AbstractTransport> transport_;       ///< Transport mechanism for communication
+  std::unique_ptr<tool::ToolRegistry> tool_registry_;       ///< Tool registry for handling MCP requests
 
   /**
    * @brief Internal implementation of server startup logic

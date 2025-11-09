@@ -48,6 +48,9 @@ public:
   void registerTool(const std::string& name, const std::string& description,
                     const ToolHandler<Params>& handler);
 
+  rfl::Generic callTool(const std::string& name, const rfl::Generic& params);
+  std::vector<msg::types::Tool> get_tool_list();
+
 private:
   /// Map of tool names to their internal handlers
   std::map<std::string, ToolHandlerInternal> tools_;
