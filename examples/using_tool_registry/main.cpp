@@ -1,3 +1,5 @@
+#include <rfl/Generic.hpp>
+
 #include "phoenix_mcp/tool_registry/tool_registry.h"
 #include "spdlog/spdlog.h"
 

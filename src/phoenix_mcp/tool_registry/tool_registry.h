@@ -99,7 +99,7 @@ void ToolRegistry::registerTool(const std::string& name,
   const msg::types::Tool tool = {
       .name = name,
       .description = description,
-      .inputSchema = input_schema,
+      .input_schema = input_schema,
   };
 
   // Log the tool specification for debugging

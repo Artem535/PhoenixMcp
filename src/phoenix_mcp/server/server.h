@@ -32,9 +32,11 @@ public:
    * @param name Server name for identification
    * @param desc Server description
    * @param transport Unique pointer to transport implementation for communication
+   * @param tool_registry Unique pointer to tool registry for handling MCP tools
    */
   Server(std::string name, std::string desc,
-         std::unique_ptr<AbstractTransport> transport);
+         std::unique_ptr<AbstractTransport> transport,
+         std::unique_ptr<tool::ToolRegistry> tool_registry);
 
   /**
    * @brief Start the server and begin processing requests
@@ -46,12 +48,16 @@ public:
    */
   int start_server();
 
+  void change_tool_registry(std::unique_ptr<tool::ToolRegistry> tool_registry);
+
 private:
-  bool initialized_ = false;
-  std::string name_;                                   ///< Server name
-  std::string desc_;                                   ///< Server description
-  std::unique_ptr<AbstractTransport> transport_;       ///< Transport mechanism for communication
-  std::unique_ptr<tool::ToolRegistry> tool_registry_;       ///< Tool registry for handling MCP requests
+
+  std::string name_; ///< Server name
+  std::string desc_; ///< Server description
+  ///< Transport mechanism for communication
+  std::unique_ptr<AbstractTransport> transport_;
+  ///< Tool registry for handling MCP requests
+  std::unique_ptr<tool::ToolRegistry> tool_registry_;
 
   /**
    * @brief Internal implementation of server startup logic
@@ -60,5 +66,10 @@ private:
    * It is called by start_server() and should not be called directly.
    */
   void start_server_();
+
+
+
+  msg::types::InitializeResult handle_initialize_request(const msg::types::InitializeRequest& request);
+
 };
 };
