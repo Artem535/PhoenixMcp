@@ -15,40 +15,35 @@
 #include "../types/msg_types.hpp"
 
 namespace pxm::tool {
-/**
- * @brief Function type for internal tool handlers that work with generic parameters
- */
-using ToolHandlerInternal = std::function<rfl::Generic(
+/// @brief Function type for internal tool handlers that work with generic parameters
+using ToolHandlerInternal = std::function<msg::types::CallToolResult(
     const rfl::Generic& params)>;
 
-/**
- * @brief Template function type for tool handlers with specific parameter types
- * @tparam Params The parameter struct type for this tool
- */
+/// @brief Template function type for tool handlers with specific parameter types
+/// @tparam Params The parameter struct type for this tool
 template <typename Params>
-using ToolHandler = std::function<rfl::Generic(const Params& params)>;
+using ToolHandler = std::function<msg::types::CallToolResult(
+    const Params& params)>;
 
-/**
- * @brief Registry for managing available tools in the MCP server
- *
- * This class handles registration of tools with their schemas and handlers,
- * allowing the server to dynamically expose tools to clients.
- */
+/// @brief Registry for managing available tools in the MCP server
+/// 
+/// This class handles registration of tools with their schemas and handlers,
+/// allowing the server to dynamically expose tools to clients.
 class ToolRegistry {
 public:
-  /**
-   * @brief Register a new tool with the registry
-   *
-   * @tparam Params The parameter struct type for this tool
-   * @param name Unique name for the tool
-   * @param description Human-readable description of what the tool does
-   * @param handler Function that implements the tool's behavior
-   */
+  /// @brief Register a new tool with the registry
+  /// 
+  /// @tparam Params The parameter struct type for this tool
+  /// @param name Unique name for the tool
+  /// @param description Human-readable description of what the tool does
+  /// @param handler Function that implements the tool's behavior
   template <typename Params>
   void registerTool(const std::string& name, const std::string& description,
                     const ToolHandler<Params>& handler);
 
-  rfl::Generic callTool(const std::string& name, const rfl::Generic& params);
+  msg::types::CallToolResult call_tool(const std::string& name,
+                                       const rfl::Generic& params);
+
   std::vector<msg::types::Tool> get_tool_list();
 
 private:
@@ -58,12 +53,9 @@ private:
   /// Map of tool names to their metadata descriptions
   std::map<std::string, msg::types::Tool> tool_descriptions_;
 
-  /**
-   * @brief Extract the actual schema definition from a JSON schema with references
-   *
-   * @param obj JSON schema that may contain $ref references
-   * @return nlohmann::json The flattened schema without references
-   */
+  /// @brief Extract the actual schema definition from a JSON schema with references
+  /// @param obj JSON schema that may contain $ref references
+  /// @return nlohmann::json The flattened schema without references
   static nlohmann::json get_flat_scheme(const nlohmann::json& obj);
 };
 

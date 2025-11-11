@@ -104,7 +104,8 @@ struct CallToolRequest {
 
 /* --------------- notifications--------------- */
 
-class AbstractNotification {};
+class AbstractNotification {
+};
 
 /// @brief Structure representing a cancellation notification
 struct CancelNotification : AbstractNotification {
@@ -119,7 +120,7 @@ struct InitializeNotification : AbstractNotification {
 };
 
 /// @brief Structure representing a notification when the tool list changes
-struct ToolListChangedNotification : AbstractNotification{
+struct ToolListChangedNotification : AbstractNotification {
   rfl::Flatten<Notification> flatten;
   static constexpr std::string_view method = "notification/tools/listChanged";
 };
@@ -262,9 +263,11 @@ struct EmbeddedResource {
 };
 
 /// @brief Structure representing the result of a tool call
+using VariantContent = std::variant<
+  TextContent, ImageContent, EmbeddedResource>;
+
 struct CallToolResult {
-  rfl::Rename<"content", std::vector<std::variant<
-                TextContent, ImageContent, EmbeddedResource> > > content;
+  rfl::Rename<"content", std::vector<VariantContent> > content;
   rfl::Rename<"isError", std::optional<bool> > is_error;
 };
 
@@ -273,5 +276,6 @@ struct CallToolParams {
   rfl::Rename<"name", std::string> name;
   rfl::Rename<"arguments", OptionalParams> arguments;
 };
+
 
 } // namespace pxm::msg::types
