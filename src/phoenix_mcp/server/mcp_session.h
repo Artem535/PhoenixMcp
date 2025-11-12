@@ -40,7 +40,7 @@ public:
   /// @brief Handle JSON request as string
   /// @param request JSON string containing the request
   /// @return Response in rfl::Generic format
-  rfl::Generic handle_request(const std::string& request);
+  std::optional<rfl::Generic> handle_input(const std::string& request);
 
   /// @brief Handle structured request
   /// @param request Structured request object
@@ -113,7 +113,7 @@ private:
   /// @brief Handle incoming notification
   /// @param notif Notification object to process
   /// @return Response or empty if no response needed
-  rfl::Generic handle_notification(
+  std::optional<rfl::Generic> handle_notification(
       const msg::types::Notification& notif);
 
 };

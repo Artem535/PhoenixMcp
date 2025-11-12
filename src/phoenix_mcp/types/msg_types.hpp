@@ -12,16 +12,17 @@
 #include <rfl/Generic.hpp>
 #include <rfl/Flatten.hpp>
 
+
 namespace pxm::msg::types {
 
 /// @brief Type alias for request identifiers, which can be either integer or string
 using RequestId = std::variant<int, std::string>;
 
 /// @brief Type alias for optional parameters map with generic values
-using OptionalParams = std::optional<std::map<std::string, rfl::Generic> >;
+using OptionalParams = std::optional<rfl::Generic>;
 
 /// @brief Type alias for result map with generic values
-using Result = std::map<std::string, rfl::Generic>;
+using Result = rfl::Generic;
 
 /// @brief Type alias for empty result (same structure as Result)
 using EmptyResult = std::map<std::string, rfl::Generic>;
@@ -104,23 +105,20 @@ struct CallToolRequest {
 
 /* --------------- notifications--------------- */
 
-class AbstractNotification {
-};
-
 /// @brief Structure representing a cancellation notification
-struct CancelNotification : AbstractNotification {
+struct CancelNotification {
   rfl::Flatten<Notification> flatten;
   static constexpr std::string_view method = "notifications/cancelled";
 };
 
 /// @brief Structure representing an initialization notification
-struct InitializeNotification : AbstractNotification {
+struct InitializeNotification {
   rfl::Flatten<Notification> flatten;
-  static constexpr std::string_view method = "notification/initialized";
+  static constexpr std::string_view method = "notifications/initialized";
 };
 
 /// @brief Structure representing a notification when the tool list changes
-struct ToolListChangedNotification : AbstractNotification {
+struct ToolListChangedNotification {
   rfl::Flatten<Notification> flatten;
   static constexpr std::string_view method = "notification/tools/listChanged";
 };
@@ -191,6 +189,12 @@ struct InitializeResult {
   rfl::Rename<"capabilities", ServerCapabilities> capabilities;
   rfl::Rename<"serverInfo", Implementation> server_info;
   rfl::Rename<"instruction", std::optional<std::string> > instruction;
+};
+
+struct InitializeResultRPC {
+  rfl::Rename<"jsonrpc", std::string> jsonrpc = "2.0";
+  rfl::Rename<"id", RequestId> id;
+  rfl::Rename<"result", InitializeResult> result;
 };
 
 /* --------------- pagination / tools / resources / content --------------- */
@@ -277,5 +281,20 @@ struct CallToolParams {
   rfl::Rename<"arguments", OptionalParams> arguments;
 };
 
+struct PropertySchema {
+  std::string type;
+};
+
+struct ToolInputDef {
+  std::string type;
+  std::map<std::string, PropertySchema> properties;
+  std::vector<std::string> required;
+};
+
+struct ToolInputSchema {
+  rfl::Rename<"$schema",std::string> schema;
+  rfl::Rename<"$ref", std::string> ref;
+  rfl::Rename<"$defs", std::map<std::string, InputSchema>> defs;
+};
 
 } // namespace pxm::msg::types

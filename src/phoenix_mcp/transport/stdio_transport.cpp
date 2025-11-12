@@ -14,6 +14,12 @@ std::string StdioTransport::read_msg() {
 }
 
 void StdioTransport::write_msg(const std::string& msg) {
+  if (msg == "null") {
+    spdlog::error("StdioTransport: refusing to write 'null' to stdout");
+    return;
+  }
+
+
   std::cout << msg << '\n';
 }
 }

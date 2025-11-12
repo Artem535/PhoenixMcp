@@ -2,6 +2,7 @@
 // Created by artem.d on 09.11.2025.
 //
 #pragma once
+#include <spdlog/spdlog.h>
 #include "abstract_transport.h"
 
 namespace pxm::server {

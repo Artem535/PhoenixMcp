@@ -9,9 +9,9 @@
 
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
+#include <rfl/json.hpp>
 #include <rfl/Generic.hpp>
 
-#include "abstract_tool_params.h"
 #include "../types/msg_types.hpp"
 
 namespace pxm::tool {
@@ -38,7 +38,7 @@ public:
   /// @param description Human-readable description of what the tool does
   /// @param handler Function that implements the tool's behavior
   template <typename Params>
-  void registerTool(const std::string& name, const std::string& description,
+  void register_tool(const std::string& name, const std::string& description,
                     const ToolHandler<Params>& handler);
 
   msg::types::CallToolResult call_tool(const std::string& name,
@@ -60,43 +60,27 @@ private:
 };
 
 template <typename Params>
-void ToolRegistry::registerTool(const std::string& name,
+void ToolRegistry::register_tool(const std::string& name,
                                 const std::string& description,
                                 const ToolHandler<Params>& handler) {
   // Generate JSON schema for the parameter type
   const auto schema_str = rfl::json::to_schema<Params>();
-  const auto obj = nlohmann::json::parse(schema_str);
-  const auto flat_scheme = get_flat_scheme(obj);
+  auto schema = rfl::json::read<msg::types::ToolInputSchema>(schema_str).value();
 
-  // Extract properties from the schema
-  std::map<std::string, rfl::Generic> properties;
-  for (const auto& [key, value] : flat_scheme["properties"].items()) {
-    properties[key] = rfl::Generic(value.dump());
-  }
-
-  // Extract required fields if they exist
-  std::optional<std::vector<std::string> > required;
-  if (flat_scheme.contains("required")) {
-    required = flat_scheme["required"].template get<std::vector<
-      std::string> >();
-  }
-
-  // Create input schema structure
-  const msg::types::InputSchema input_schema = {
-      .properties = properties,
-      .required = required,
-  };
+  std::string ref = schema.ref.value();
+  const size_t suffix_position = ref.find_last_of("/");
+  ref = ref.substr(suffix_position + 1);
 
   // Create tool description structure
   const msg::types::Tool tool = {
       .name = name,
       .description = description,
-      .input_schema = input_schema,
+      .input_schema = schema.defs.value()[ref],
   };
 
   // Log the tool specification for debugging
   spdlog::debug(
-      "ToolRegistry::registerTool| Create the tool with this specification: {}",
+      "ToolRegistry::register_tool| Create the tool with this specification: {}",
       rfl::json::write(tool));
 
   // Store tool description and wrap handler for internal use
@@ -108,6 +92,6 @@ void ToolRegistry::registerTool(const std::string& name,
     return handler(params);
   };
 
-  spdlog::debug("ToolRegistry::registerTool| Tool {} registered", name);
+  spdlog::debug("ToolRegistry::register_tool| Tool {} registered", name);
 }
 }

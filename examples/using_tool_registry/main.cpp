@@ -1,8 +1,8 @@
 #include <rfl/Generic.hpp>
 #include <rfl/json.hpp>
 
-#include "../../src/phoenix_mcp/tool_registry/utils.hpp"
-#include "../../src/phoenix_mcp/types/msg_types.hpp"
+#include "phoenix_mcp/tool_registry/utils.hpp"
+#include "phoenix_mcp/types/msg_types.hpp"
 #include "phoenix_mcp/tool_registry/tool_registry.h"
 #include "spdlog/spdlog.h"
 
@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
   // Create tool registry.
   pxm::tool::ToolRegistry registry;
   // Register function.
-  registry.registerTool<Test>("test", "", [](const Test& test) {
+  registry.register_tool<Test>("test", "", [](const Test& test) {
     rfl::Generic::Object obj;
     obj["a"] = test.a + 1;
     obj["b"] = test.b + 2;
