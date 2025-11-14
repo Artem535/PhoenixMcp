@@ -4,6 +4,8 @@
 
 #include "tool_registry.h"
 
+#include <ranges>
+
 namespace pxm::tool {
 msg::types::CallToolResult ToolRegistry::call_tool(const std::string& name,
                                                    const rfl::Generic& params) {
@@ -24,19 +26,6 @@ std::vector<pxm::msg::types::Tool> ToolRegistry::get_tool_list() {
   const auto values = tool_descriptions_ | std::views::values;
   std::vector<msg::types::Tool> tools{values.begin(), values.end()};
   return std::move(tools);
-}
-
-nlohmann::json pxm::tool::ToolRegistry::get_flat_scheme(
-    const nlohmann::json& obj) {
-
-  if (!obj.contains("$ref")) {
-    return obj;
-  }
-
-  const std::string ref = obj["$ref"];
-  const auto last_position = ref.find_last_of('/');
-  const auto class_name = ref.substr(last_position + 1);
-  return obj["$defs"][class_name];
 }
 
 }

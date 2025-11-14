@@ -8,7 +8,6 @@
 #include <functional>
 
 #include <spdlog/spdlog.h>
-#include <nlohmann/json.hpp>
 #include <rfl/json.hpp>
 #include <rfl/Generic.hpp>
 
@@ -53,10 +52,6 @@ private:
   /// Map of tool names to their metadata descriptions
   std::map<std::string, msg::types::Tool> tool_descriptions_;
 
-  /// @brief Extract the actual schema definition from a JSON schema with references
-  /// @param obj JSON schema that may contain $ref references
-  /// @return nlohmann::json The flattened schema without references
-  static nlohmann::json get_flat_scheme(const nlohmann::json& obj);
 };
 
 template <typename Params>
@@ -68,7 +63,7 @@ void ToolRegistry::register_tool(const std::string& name,
   auto schema = rfl::json::read<msg::types::ToolInputSchema>(schema_str).value();
 
   std::string ref = schema.ref.value();
-  const size_t suffix_position = ref.find_last_of("/");
+  const size_t suffix_position = ref.find_last_of('/');
   ref = ref.substr(suffix_position + 1);
 
   // Create tool description structure

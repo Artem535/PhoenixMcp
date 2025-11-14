@@ -16,6 +16,7 @@
 
 
 namespace pxm::server {
+
 namespace ch = std::chrono;
 namespace cnt_error = constants::msg_error;
 namespace msg_t = msg::types;
@@ -116,5 +117,7 @@ private:
   std::optional<rfl::Generic> handle_notification(
       const msg::types::Notification& notif);
 
+
+  rfl::Generic call_tool(const msg::types::Request& request);
 };
 }
