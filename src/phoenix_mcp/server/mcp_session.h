@@ -118,6 +118,6 @@ private:
       const msg::types::Notification& notif);
 
 
-  rfl::Generic call_tool(const msg::types::Request& request);
+  rfl::Generic call_tool(const msg::types::Request& request) const;
 };
 }

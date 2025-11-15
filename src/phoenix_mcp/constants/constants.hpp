@@ -4,6 +4,7 @@
 
 #pragma once
 #include <array>
+#include <string_view>
 
 namespace pxm::constants::transport {
 enum class TransportType {
@@ -38,4 +39,17 @@ enum Code {
   Invalid_params = -32602,
   Internal_error = -32603,
 };
+}
+
+namespace pxm::msg::types::constants {
+
+constexpr std::string_view initialize_request = "initialize";
+constexpr std::string_view ping_request = "ping";
+constexpr std::string_view list_tools_request = "tools/list";
+constexpr std::string_view call_tool_request = "tools/call";
+constexpr std::string_view cancel_notification = "notifications/cancelled";
+constexpr std::string_view initialize_notification =
+    "notifications/initialized";
+constexpr std::string_view tool_list_changed_notification =
+    "notification/tools/listChanged";
 }

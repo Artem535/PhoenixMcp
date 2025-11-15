@@ -243,8 +243,6 @@ struct ToolInputSchema {
 struct InitializeRequest {
   /// @brief Inherited JSON-RPC request fields
   rfl::Flatten<Request> flatten;
-  /// @brief Method name constant
-  static constexpr std::string_view method = "initialize";
 };
 
 /// @brief Ping request for connectivity testing
@@ -252,10 +250,6 @@ struct InitializeRequest {
 struct PingRequest {
   /// @brief Inherited JSON-RPC request fields
   rfl::Flatten<Request> flatten;
-  /// @brief Optional parameters for ping operation
-  OptionalParams params;
-  /// @brief Method name constant
-  static constexpr std::string_view method = "ping";
 };
 
 /// @brief Request to list available tools
@@ -263,8 +257,6 @@ struct PingRequest {
 struct ListToolsRequest {
   /// @brief Inherited JSON-RPC request fields
   rfl::Flatten<Request> flatten;
-  /// @brief Method name constant
-  static constexpr std::string_view method = "tools/list";
 };
 
 /// @brief Request to execute a specific tool
@@ -272,8 +264,6 @@ struct ListToolsRequest {
 struct CallToolRequest {
   /// @brief Inherited JSON-RPC request fields
   rfl::Flatten<MinimalRequest> flatten;
-  /// @brief Method name constant
-  static constexpr std::string_view method = "tools/call";
   /// @brief Optional parameters specifying tool and arguments
   std::optional<CallToolParams> params;
 };
@@ -285,8 +275,6 @@ struct CallToolRequest {
 struct CancelNotification {
   /// @brief Inherited notification fields
   rfl::Flatten<Notification> flatten;
-  /// @brief Method name constant
-  static constexpr std::string_view method = "notifications/cancelled";
 };
 
 /// @brief Initialization complete notification
@@ -294,8 +282,6 @@ struct CancelNotification {
 struct InitializeNotification {
   rfl::Flatten<Notification> flatten;
   /// @brief Inherited notification fields
-  /// @brief Method name constant
-  static constexpr std::string_view method = "notifications/initialized";
 };
 
 /// @brief Tools list changed notification
@@ -303,8 +289,6 @@ struct InitializeNotification {
 struct ToolListChangedNotification {
   /// @brief Inherited notification fields
   rfl::Flatten<Notification> flatten;
-  /// @brief Method name constant
-  static constexpr std::string_view method = "notification/tools/listChanged";
 };
 
 /* ---------- Capability Parameters ---------- */
@@ -319,7 +303,7 @@ struct NotificationParams {
 /// @brief Parameters for roots capability
 /// @details Configuration for root directory monitoring
 struct RootsParams {
-  std::optional<bool> list_changed; /// @brief Whether list of roots can change
+  rfl::Rename<"listChanged", std::optional<bool>> list_changed; /// @brief Whether list of roots can change
 };
 
 /// @brief Client capabilities declaration

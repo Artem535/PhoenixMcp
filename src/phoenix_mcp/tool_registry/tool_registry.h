@@ -36,9 +36,41 @@ public:
   /// @param name Unique name for the tool
   /// @param description Human-readable description of what the tool does
   /// @param handler Function that implements the tool's behavior
-  template <typename Params>
+  template <typename InputParams>
   void register_tool(const std::string& name, const std::string& description,
-                    const ToolHandler<Params>& handler);
+                     const ToolHandler<InputParams>& handler) {
+    // Generate JSON schema for the parameter type
+    const auto schema_str = rfl::json::to_schema<InputParams>();
+    auto schema = rfl::json::read<msg::types::ToolInputSchema>(schema_str).
+        value();
+
+    std::string ref = schema.ref.value();
+    const size_t suffix_position = ref.find_last_of('/');
+    ref = ref.substr(suffix_position + 1);
+
+    // Create tool description structure
+    const msg::types::Tool tool = {
+      .name = name,
+      .description = description,
+      .input_schema = schema.defs.value()[ref],
+  };
+
+    // Log the tool specification for debugging
+    spdlog::debug(
+        "ToolRegistry::register_tool| Create the tool with this specification: {}",
+        rfl::json::write(tool));
+
+    // Store tool description and wrap handler for internal use
+    tool_descriptions_[name] = tool;
+    tools_[name] = [handler](const rfl::Generic& generic_params) {
+      // Convert generic parameters to the specific type
+      InputParams params = rfl::from_generic<InputParams>(generic_params).value();
+      // Call the actual handler
+      return handler(params);
+    };
+
+    spdlog::debug("ToolRegistry::register_tool| Tool {} registered", name);
+  }
 
   msg::types::CallToolResult call_tool(const std::string& name,
                                        const rfl::Generic& params);
@@ -54,39 +86,4 @@ private:
 
 };
 
-template <typename InputParams>
-void ToolRegistry::register_tool(const std::string& name,
-                                const std::string& description,
-                                const ToolHandler<InputParams>& handler) {
-  // Generate JSON schema for the parameter type
-  const auto schema_str = rfl::json::to_schema<InputParams>();
-  auto schema = rfl::json::read<msg::types::ToolInputSchema>(schema_str).value();
-
-  std::string ref = schema.ref.value();
-  const size_t suffix_position = ref.find_last_of('/');
-  ref = ref.substr(suffix_position + 1);
-
-  // Create tool description structure
-  const msg::types::Tool tool = {
-      .name = name,
-      .description = description,
-      .input_schema = schema.defs.value()[ref],
-  };
-
-  // Log the tool specification for debugging
-  spdlog::debug(
-      "ToolRegistry::register_tool| Create the tool with this specification: {}",
-      rfl::json::write(tool));
-
-  // Store tool description and wrap handler for internal use
-  tool_descriptions_[name] = tool;
-  tools_[name] = [handler](const rfl::Generic& generic_params) {
-    // Convert generic parameters to the specific type
-    InputParams params = rfl::from_generic<InputParams>(generic_params).value();
-    // Call the actual handler
-    return handler(params);
-  };
-
-  spdlog::debug("ToolRegistry::register_tool| Tool {} registered", name);
-}
 }

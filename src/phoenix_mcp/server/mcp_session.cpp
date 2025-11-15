@@ -8,16 +8,18 @@
 
 namespace pxm::server {
 
+// clang-format off
 McpSession::McpSession(
     msg::types::ServerCapabilities server_capabilities,
     msg::types::Implementation server_info,
     std::string instruction,
-    std::unique_ptr<tool::ToolRegistry> tool_registry) : tool_registry_(
-    std::move(tool_registry)), server_capabilities_(std::move(
-    server_capabilities)), server_info_(std::move(server_info)), instruction_(
-    std::move(
-        instruction)) {
+    std::unique_ptr<tool::ToolRegistry> tool_registry) :
+  tool_registry_(std::move(tool_registry)),
+  server_capabilities_(std::move(server_capabilities)),
+  server_info_(std::move(server_info)),
+  instruction_(std::move(instruction)) {
 }
+// clang-format on
 
 std::optional<rfl::Generic>
 McpSession::handle_input(const std::string& request) {
@@ -73,7 +75,7 @@ std::optional<msg::types::Request> McpSession::try_serialize_request(
 
 rfl::Generic McpSession::try_initialize(const msg::types::Request& request) {
   // Check correct msg init method.
-  if (request.method != msg::types::InitializeRequest::method) {
+  if (request.method != msg_t::constants::initialize_request) {
     return create_error("Invalid request method", request.id);
   }
 
@@ -110,14 +112,14 @@ rfl::Generic McpSession::make_response(const T& result,
 }
 
 rfl::Generic McpSession::handle_operation(const msg::types::Request& request) {
-  if (request.method == msg_t::ListToolsRequest::method) {
+  if (request.method == msg_t::constants::list_tools_request) {
     const auto tool_list = tool_registry_->get_tool_list();
     const auto tool_list_res = msg_t::ListToolsResult{.tools = tool_list};
     return make_response(tool_list_res, request.id);
   }
 
   // TODO: Refactor this
-  if (request.method == msg_t::CallToolRequest::method) {
+  if (request.method == msg_t::constants::call_tool_request) {
     return call_tool(request);
   }
 
@@ -154,8 +156,9 @@ std::optional<rfl::Generic> McpSession::handle_notification(
     const msg::types::Notification& notif) {
 
   const bool is_initialize = stage_ == Stage::Initialized;
-  const bool is_correct_method = notif.method ==
-                                 msg::types::InitializeNotification::method;
+  const bool is_correct_method =
+      notif.method == msg_t::constants::initialize_notification;
+
   spdlog::debug("McpSession| is_initialize: {}, is_correct_method: {}",
                 is_initialize, is_correct_method);
 
@@ -167,7 +170,7 @@ std::optional<rfl::Generic> McpSession::handle_notification(
   return std::nullopt;
 }
 
-rfl::Generic McpSession::call_tool(const msg::types::Request& request) {
+rfl::Generic McpSession::call_tool(const msg::types::Request& request) const {
   spdlog::debug("McpSession::call_tool| Call tool {}",
                 rfl::json::write(request));
 
@@ -180,16 +183,16 @@ rfl::Generic McpSession::call_tool(const msg::types::Request& request) {
     return create_error("Invalid request", request.id);
   }
 
-  const auto params = opt_params.value();
+  const auto [name, arguments] = opt_params.value();
 
   spdlog::debug("McpSession::handle_operation| Call tool, name: {}",
-                params.name);
+                name);
   spdlog::debug(
       "McpSession::handle_operation| Call tool, args: {}",
-      rfl::json::write(params.arguments));
+      rfl::json::write(arguments));
 
   const auto result = tool_registry_->
-      call_tool(params.name, params.arguments.value());
+      call_tool(name, arguments.value());
 
   return make_response(result, request.id);
 }
