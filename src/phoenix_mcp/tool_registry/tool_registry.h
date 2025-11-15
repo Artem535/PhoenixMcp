@@ -19,7 +19,7 @@ using ToolHandlerInternal = std::function<msg::types::CallToolResult(
     const rfl::Generic& params)>;
 
 /// @brief Template function type for tool handlers with specific parameter types
-/// @tparam Params The parameter struct type for this tool
+/// @tparam InputParams The parameter struct type for this tool
 template <typename Params>
 using ToolHandler = std::function<msg::types::CallToolResult(
     const Params& params)>;
@@ -32,7 +32,7 @@ class ToolRegistry {
 public:
   /// @brief Register a new tool with the registry
   /// 
-  /// @tparam Params The parameter struct type for this tool
+  /// @tparam InputParams The parameter struct type for this tool
   /// @param name Unique name for the tool
   /// @param description Human-readable description of what the tool does
   /// @param handler Function that implements the tool's behavior
@@ -54,12 +54,12 @@ private:
 
 };
 
-template <typename Params>
+template <typename InputParams>
 void ToolRegistry::register_tool(const std::string& name,
                                 const std::string& description,
-                                const ToolHandler<Params>& handler) {
+                                const ToolHandler<InputParams>& handler) {
   // Generate JSON schema for the parameter type
-  const auto schema_str = rfl::json::to_schema<Params>();
+  const auto schema_str = rfl::json::to_schema<InputParams>();
   auto schema = rfl::json::read<msg::types::ToolInputSchema>(schema_str).value();
 
   std::string ref = schema.ref.value();
@@ -82,7 +82,7 @@ void ToolRegistry::register_tool(const std::string& name,
   tool_descriptions_[name] = tool;
   tools_[name] = [handler](const rfl::Generic& generic_params) {
     // Convert generic parameters to the specific type
-    Params params = rfl::from_generic<Params>(generic_params).value();
+    InputParams params = rfl::from_generic<InputParams>(generic_params).value();
     // Call the actual handler
     return handler(params);
   };
