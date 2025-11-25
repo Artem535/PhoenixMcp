@@ -1,0 +1,466 @@
+= PhoenixMCP
+:toc: left
+:toclevels: 3
+:source-highlighter: rouge
+:icons: font
+:sectanchors:
+
+== Description
+
+PhoenixMCP is a modern implementation of a Model Context Protocol (MCP) server in C++20. The project provides a type-safe framework for creating MCP servers that integrate with LLM clients (Claude Desktop and others) through a standardized interaction protocol.
+
+The main goal is to simplify the creation of tool servers for AI assistants by providing automatic serialization, JSON schema generation, and session lifecycle management.
+
+== Features
+
+* **Complete MCP implementation** — compliance with JSON-RPC 2.0 specification and protocol version 2025-06-18
+* **Type-safe tool registration** — using C++ templates for parameter validation at compile time
+* **Automatic JSON schema generation** — via the reflectcpp library based on data structures
+* **Flexible transport system** — abstract layer, current implementation via stdin/stdout
+* **Lifecycle management** — full implementation of stages: uninitialized → initialized → operation → shutdown
+* **Support for different response formats** — text, JSON objects, images (base64)
+* **Advanced logging** — integration with spdlog with multiple verbosity levels
+* **Industrial-grade code quality** — application of clang-format, clang-tidy, and modern C++20 practices
+
+== Requirements
+
+* Compiler with full C++20 support (GCC 11+, Clang 13+, MSVC 2022+)
+* https://xmake.io[Xmake] 2.8+ — build system
+* https://vcpkg.io[Vcpkg] — package manager (integrated with xmake)
+* Operating system: Linux, macOS, Windows (WSL)
+
+== Installation and Build
+
+=== Cloning
+
+[source,bash]
+----
+git clone <repository-url>
+cd PhoenixMcp
+----
+
+=== Dependencies
+
+Xmake will automatically install required packages via vcpkg:
+- `reflectcpp` — reflection and serialization
+- `yyjson` — fast JSON parser
+- `spdlog` — logging
+
+=== Build
+
+Debug version:
+
+[source,bash]
+----
+xmake f -m debug
+xmake -j$(nproc)
+----
+
+Release version with optimizations:
+
+[source,bash]
+----
+xmake f -m release
+xmake -j$(nproc)
+----
+
+=== Installation Check
+
+[source,bash]
+----
+xmake run create_server --help  # Help output (if implemented)
+----
+
+== Quick Start
+
+Complete example of creating an MCP server with mathematical tools:
+
+[source,cpp]
+----
+#include <rfl/Generic.hpp>
+#include "phoenix_mcp/server/server.h"
+#include "phoenix_mcp/transport/stdio_transport.h"
+#include "phoenix_mcp/tool_registry/tool_registry.h"
+
+// 1. Define parameter structures
+struct AddInput {
+  int a;
+  int b;
+};
+
+struct AddOutput {
+  int sum;
+  std::string description;
+};
+
+// 2. Implement handler
+AddOutput add_tool(const AddInput& input) {
+  return {
+    .sum = input.a + input.b,
+    .description = "Result of addition"
+  };
+}
+
+// 3. Create and run the server
+int main() {
+  // Configure logging
+  auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+  spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+      "mcp_server", spdlog::sinks_init_list{console_sink}
+  ));
+  spdlog::set_level(spdlog::level::debug);
+
+  // Create registry and register tool
+  auto registry = std::make_unique<pxm::tool::ToolRegistry>();
+  registry->register_tool<AddInput, AddOutput>(
+      "add",                                  // tool name
+      "Add two integers and return detailed result",  // description
+      add_tool                               // handler
+  );
+
+  // Configure transport
+  auto transport = std::make_unique<pxm::server::StdioTransport>();
+
+  // Create and run the server
+  pxm::server::Server server{
+      "Math MCP Server",                    // server name
+      "1.0.0",                             // version
+      std::move(transport),                // transport
+      std::move(registry),                 // tool registry
+      "Server provides mathematical operations"  // instruction for AI
+  };
+
+  return server.start_server();
+}
+----
+
+== Detailed Documentation
+
+=== Tool Registration
+
+Two types of handlers are supported:
+
+==== Type 1: Returning CallToolResult (manual serialization)
+
+[source,cpp]
+----
+registry->register_tool<ParseJsonInput>(
+    "parse_json",
+    "Parse and validate JSON string",
+    [](const ParseJsonInput& input) -> pxm::msg::types::CallToolResult {
+        try {
+            auto parsed = rfl::json::read<rfl::Generic>(input.json_string);
+            return pxm::utils::make_text_result("Valid JSON");
+        } catch (const std::exception& e) {
+            return pxm::utils::make_text_result(e.what(), true); // is_error = true
+        }
+    }
+);
+----
+
+==== Type 2: Returning custom type (automatic serialization)
+
+[source,cpp]
+----
+struct DataInput { std::string query; };
+struct DataOutput { std::vector<std::string> matches; bool found; };
+
+registry->register_tool<DataInput, DataOutput>(
+    "search_data",
+    "Search records by query",
+    [](const DataInput& input) -> DataOutput {
+        // Search logic...
+        return {
+            .matches = {"result1", "result2"},
+            .found = true
+        };
+    }
+);
+----
+
+The framework automatically:
+- Generates JSON schema for `DataInput`
+- Serializes `DataOutput` to JSON string
+- Wraps the result in `CallToolResult::TextContent`
+
+=== Return Data Formats
+
+==== Text Result
+
+[source,cpp]
+----
+return pxm::utils::make_text_result("Operation completed successfully");
+----
+
+==== Image Result
+
+[source,cpp]
+----
+std::string base64_image = "...";
+return pxm::utils::make_image_result(base64_image, "image/png");
+----
+
+==== Error Result
+
+[source,cpp]
+----
+return pxm::utils::make_text_result("Invalid input parameters", true);
+----
+
+=== Creating Custom Transport
+
+Implement the `AbstractTransport` interface:
+
+[source,cpp]
+----
+class HttpTransport : public pxm::server::AbstractTransport {
+public:
+    std::string read_msg() override {
+        // Read HTTP request
+        return receive_json_body();
+    }
+
+    void write_msg(const std::string& msg) override {
+        // Send HTTP response
+        send_json_response(msg);
+    }
+};
+----
+
+=== Session Configuration
+
+The server supports initialization timeout (5 seconds by default) and automatic stage transitions throughout the lifecycle.
+
+== Usage Examples
+
+=== Integration with Claude Desktop
+
+Save configuration to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "math-server": {
+      "command": "/absolute/path/to/build/linux/x86_64/release/create_server",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+----
+
+After restarting Claude Desktop, your tools will be available in the interface.
+
+=== Example: REST API Client
+
+Implement a tool for calling external APIs:
+
+[source,cpp]
+----
+struct ApiInput {
+  std::string endpoint;
+  std::map<std::string, std::string> headers;
+};
+
+struct ApiOutput {
+  int status_code;
+  std::string body;
+};
+
+registry->register_tool<ApiInput, ApiOutput>(
+    "call_api",
+    "Make HTTP GET request",
+    [](const ApiInput& input) -> ApiOutput {
+        httplib::Client client("api.example.com");
+        auto res = client.Get(input.endpoint.c_str());
+
+        return {
+            .status_code = res->status,
+            .body = res->body
+        };
+    }
+);
+----
+
+=== Example: File Operations
+
+[source,cpp]
+----
+struct FileReadInput {
+  std::string path;
+};
+
+registry->register_tool<FileReadInput>(
+    "read_file",
+    "Read text file content",
+    [](const FileReadInput& input) -> pxm::msg::types::CallToolResult {
+        std::ifstream file(input.path);
+        if (!file) {
+            return pxm::utils::make_text_result("File not found", true);
+        }
+
+        std::string content((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+
+        return pxm::utils::make_text_result(content);
+    }
+);
+----
+
+== Architecture
+
+[plantuml,format=svg]
+----
+@startuml
+component "Client" as Client
+component "PhoenixMCP Server" as Server
+
+package "Transport Layer" {
+  [AbstractTransport] <|- [StdioTransport]
+}
+
+package "Core Server" {
+  [Server] --> [McpSession] : manages
+  [McpSession] --> [ToolRegistry] : uses
+}
+
+package "Types" {
+  [msg_types.hpp] ..> [McpSession]
+}
+
+Client --> StdioTransport : stdin/stdout
+StdioTransport --> McpSession : JSON-RPC
+ToolRegistry --> msg_types.hpp : data types
+@enduml
+----
+
+=== Session Lifecycle
+
+1. **Uninitialized** → Waiting for `initialize` request
+2. **Initialized** → Initialization received, waiting for `notifications/initialized` notification
+3. **Operation** → Active request processing (`tools/list`, `tools/call`, `ping`)
+4. **Shutdown** → Server termination
+
+== Extensibility
+
+=== Adding New Content Type
+
+Create a structure in `msg_types.hpp` and add it to `VariantContent`:
+
+[source,cpp]
+----
+struct CustomContent {
+  std::string type = "custom";
+  std::string data;
+  std::string mime_type;
+};
+
+// In msg_types.hpp:
+using VariantContent = std::variant<TextContent, ImageContent, EmbeddedResource, CustomContent>;
+----
+
+=== Supporting New MCP Methods
+
+Extend `McpSession::handle_operation`:
+
+[source,cpp]
+----
+if (request.method == "resources/read") {
+    // Implementation for reading resources
+    return make_response(resources_->read(request), request.id);
+}
+----
+
+== Testing
+
+The project includes basic examples that serve as integration tests:
+
+[source,bash]
+----
+# Run test server
+xmake run create_server &
+
+# Send test request (via echo/nc)
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | nc localhost 8080
+----
+
+== Performance
+
+* Optimized serialization via reflectcpp and yyjson
+* Minimal data copying (using `std::move`)
+* Efficient read/write through stdio
+* Multi-threading support planned (current version is single-threaded)
+
+== Troubleshooting
+
+=== Compilation Errors
+
+* Ensure your compiler supports C++20: `g++ --version`
+* Check Vcpkg availability: `xmake require --info`
+
+=== Logging Issues
+
+If logs are not visible, check the level:
+
+[source,cpp]
+----
+spdlog::set_level(spdlog::level::trace); // Maximum verbosity
+spdlog::flush_on(spdlog::level::trace);
+----
+
+=== Initialization Errors
+
+Server expects a valid JSON-RPC request within 5 seconds. Use:
+
+[source,json]
+----
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",...}}
+----
+
+Then send notification:
+
+[source,json]
+----
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+----
+
+== License
+
+MIT License (TODO: add LICENSE file)
+
+== Contributing
+
+1. Fork the repository
+2. Create a branch: `git checkout -b feature/my-feature`
+3. Apply formatting: `clang-format -i src/**/*.cpp src/**/*.hpp`
+4. Check static analysis: `xmake check` (if configured)
+5. Submit PR with change description
+
+== Credits
+
+* reflectcpp — for the powerful reflection system
+* spdlog — for high-performance logging
+* MCP Team — for the protocol specification
+
+== Links
+
+* https://spec.modelcontextprotocol.io[MCP Protocol Specification]
+* https://github.com/getml/reflect-cpp[reflectcpp Documentation]
+* https://github.com/gabime/spdlog[spdlog Documentation]
+* https://xmake.io[Xmake Documentation]
+
+== FAQ
+
+**Q: Can I add HTTP/SSE transport?**
+A: Yes, implement the `AbstractTransport` interface.
+
+**Q: Why use rfl::Generic?**
+A: For flexible work with JSON data without losing type safety.
+
+**Q: How to add authentication?**
+A: In the current implementation — through custom transport. Built-in support is planned.
+
+== Notes
+
+This README file was automatically generated by an AI assistant (Kimi k2) based on analysis of the PhoenixMCP project source code.

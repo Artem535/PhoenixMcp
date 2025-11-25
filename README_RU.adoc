@@ -1,0 +1,466 @@
+= PhoenixMCP
+:toc: left
+:toclevels: 3
+:source-highlighter: rouge
+:icons: font
+:sectanchors:
+
+== Описание
+
+PhoenixMCP — это современная реализация сервера Model Context Protocol (MCP) на языке C++20. Проект предоставляет типобезопасный фреймворк для создания MCP-серверов, которые интегрируются с LLM-клиентами (Claude Desktop и другие) через стандартизированный протокол взаимодействия.
+
+Основная цель — упростить создание серверов с инструментами для ИИ-ассистентов, предоставив автоматическую сериализацию, генерацию JSON-схем и управление жизненным циклом сессии.
+
+== Особенности
+
+* **Полная реализация MCP** — соответствие спецификации JSON-RPC 2.0 и протоколу версии 2025-06-18
+* **Типобезопасная регистрация инструментов** — использование шаблонов C++ для валидации параметров на этапе компиляции
+* **Автоматическая генерация JSON-схем** — через библиотеку reflectcpp на основе структур данных
+* **Гибкая система транспорта** — абстрактный слой, текущая реализация через stdin/stdout
+* **Управление жизненным циклом** — полная реализация стадий: uninitialized → initialized → operation → shutdown
+* **Поддержка разных форматов ответов** — текст, JSON-объекты, изображения (base64)
+* **Продвинутое логирование** — интеграция с spdlog с множеством уровней детализации
+* **Кодовая база промышленного качества** — применение clang-format, clang-tidy и современных практик C++20
+
+== Требования
+
+* Компилятор с полной поддержкой C++20 (GCC 11+, Clang 13+, MSVC 2022+)
+* https://xmake.io[Xmake] 2.8+ — система сборки
+* https://vcpkg.io[Vcpkg] — менеджер пакетов (интегрирован с xmake)
+* Операционная система: Linux, macOS, Windows (WSL)
+
+== Установка и сборка
+
+=== Клонирование
+
+[source,bash]
+----
+git clone <repository-url>
+cd PhoenixMcp
+----
+
+=== Загрузка зависимостей
+
+Xmake автоматически установит необходимые пакеты через vcpkg:
+- `reflectcpp` — рефлексия и сериализация
+- `yyjson` — быстрый парсер JSON
+- `spdlog` — логирование
+
+=== Сборка
+
+Отладочная версия:
+
+[source,bash]
+----
+xmake f -m debug
+xmake -j$(nproc)
+----
+
+Релизная версия с оптимизациями:
+
+[source,bash]
+----
+xmake f -m release
+xmake -j$(nproc)
+----
+
+=== Проверка установки
+
+[source,bash]
+----
+xmake run create_server --help  # Вывод справки (если реализован)
+----
+
+== Быстрый старт
+
+Полный пример создания MCP-сервера с математическими инструментами:
+
+[source,cpp]
+----
+#include <rfl/Generic.hpp>
+#include "phoenix_mcp/server/server.h"
+#include "phoenix_mcp/transport/stdio_transport.h"
+#include "phoenix_mcp/tool_registry/tool_registry.h"
+
+// 1. Определите структуры параметров
+struct AddInput {
+  int a;
+  int b;
+};
+
+struct AddOutput {
+  int sum;
+  std::string description;
+};
+
+// 2. Реализуйте обработчик
+AddOutput add_tool(const AddInput& input) {
+  return {
+    .sum = input.a + input.b,
+    .description = "Result of addition"
+  };
+}
+
+// 3. Создайте и запустите сервер
+int main() {
+  // Настройте логирование
+  auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+  spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+      "mcp_server", spdlog::sinks_init_list{console_sink}
+  ));
+  spdlog::set_level(spdlog::level::debug);
+
+  // Создайте реестр и зарегистрируйте инструмент
+  auto registry = std::make_unique<pxm::tool::ToolRegistry>();
+  registry->register_tool<AddInput, AddOutput>(
+      "add",                                  // имя инструмента
+      "Add two integers and return detailed result",  // описание
+      add_tool                               // обработчик
+  );
+
+  // Настройте транспорт
+  auto transport = std::make_unique<pxm::server::StdioTransport>();
+
+  // Создайте и запустите сервер
+  pxm::server::Server server{
+      "Math MCP Server",                    // имя сервера
+      "1.0.0",                             // версия
+      std::move(transport),                // транспорт
+      std::move(registry),                 // реестр инструментов
+      "Server provides mathematical operations"  // инструкция для ИИ
+  };
+
+  return server.start_server();
+}
+----
+
+== Подробная документация
+
+=== Регистрация инструментов
+
+Поддерживаются два типа обработчиков:
+
+==== Type 1: Возврат CallToolResult (ручная сериализация)
+
+[source,cpp]
+----
+registry->register_tool<ParseJsonInput>(
+    "parse_json",
+    "Parse and validate JSON string",
+    [](const ParseJsonInput& input) -> pxm::msg::types::CallToolResult {
+        try {
+            auto parsed = rfl::json::read<rfl::Generic>(input.json_string);
+            return pxm::utils::make_text_result("Valid JSON");
+        } catch (const std::exception& e) {
+            return pxm::utils::make_text_result(e.what(), true); // is_error = true
+        }
+    }
+);
+----
+
+==== Type 2: Возврат пользовательского типа (автоматическая сериализация)
+
+[source,cpp]
+----
+struct DataInput { std::string query; };
+struct DataOutput { std::vector<std::string> matches; bool found; };
+
+registry->register_tool<DataInput, DataOutput>(
+    "search_data",
+    "Search records by query",
+    [](const DataInput& input) -> DataOutput {
+        // Логика поиска...
+        return {
+            .matches = {"result1", "result2"},
+            .found = true
+        };
+    }
+);
+----
+
+Фреймворк автоматически:
+- Сгенерирует JSON-схему для `DataInput`
+- Сериализует `DataOutput` в JSON-строку
+- Обернёт результат в `CallToolResult::TextContent`
+
+=== Форматы возвращаемых данных
+
+==== Текстовый результат
+
+[source,cpp]
+----
+return pxm::utils::make_text_result("Operation completed successfully");
+----
+
+==== Результат с изображением
+
+[source,cpp]
+----
+std::string base64_image = "...";
+return pxm::utils::make_image_result(base64_image, "image/png");
+----
+
+==== Результат с ошибкой
+
+[source,cpp]
+----
+return pxm::utils::make_text_result("Invalid input parameters", true);
+----
+
+=== Создание кастомного транспорта
+
+Реализуйте интерфейс `AbstractTransport`:
+
+[source,cpp]
+----
+class HttpTransport : public pxm::server::AbstractTransport {
+public:
+    std::string read_msg() override {
+        // Чтение HTTP-запроса
+        return receive_json_body();
+    }
+
+    void write_msg(const std::string& msg) override {
+        // Отправка HTTP-ответа
+        send_json_response(msg);
+    }
+};
+----
+
+=== Конфигурация сессии
+
+Сервер поддерживает таймаут инициализации (5 секунд по умолчанию) и автоматические переходы между стадиями жизненного цикла.
+
+== Примеры использования
+
+=== Интеграция с Claude Desktop
+
+Сохраните конфигурацию в `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) или `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "math-server": {
+      "command": "/absolute/path/to/build/linux/x86_64/release/create_server",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+----
+
+После перезапуска Claude Desktop ваши инструменты будут доступны в интерфейсе.
+
+=== Пример: REST API клиент
+
+Реализуйте инструмент для вызова внешнего API:
+
+[source,cpp]
+----
+struct ApiInput {
+  std::string endpoint;
+  std::map<std::string, std::string> headers;
+};
+
+struct ApiOutput {
+  int status_code;
+  std::string body;
+};
+
+registry->register_tool<ApiInput, ApiOutput>(
+    "call_api",
+    "Make HTTP GET request",
+    [](const ApiInput& input) -> ApiOutput {
+        httplib::Client client("api.example.com");
+        auto res = client.Get(input.endpoint.c_str());
+
+        return {
+            .status_code = res->status,
+            .body = res->body
+        };
+    }
+);
+----
+
+=== Пример: Работа с файлами
+
+[source,cpp]
+----
+struct FileReadInput {
+  std::string path;
+};
+
+registry->register_tool<FileReadInput>(
+    "read_file",
+    "Read text file content",
+    [](const FileReadInput& input) -> pxm::msg::types::CallToolResult {
+        std::ifstream file(input.path);
+        if (!file) {
+            return pxm::utils::make_text_result("File not found", true);
+        }
+
+        std::string content((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+
+        return pxm::utils::make_text_result(content);
+    }
+);
+----
+
+== Архитектура
+
+[plantuml,format=svg]
+----
+@startuml
+component "Client" as Client
+component "PhoenixMCP Server" as Server
+
+package "Transport Layer" {
+  [AbstractTransport] <|- [StdioTransport]
+}
+
+package "Core Server" {
+  [Server] --> [McpSession] : управляет
+  [McpSession] --> [ToolRegistry] : использует
+}
+
+package "Types" {
+  [msg_types.hpp] ..> [McpSession]
+}
+
+Client --> StdioTransport : stdin/stdout
+StdioTransport --> McpSession : JSON-RPC
+ToolRegistry --> msg_types.hpp : типы данных
+@enduml
+----
+
+=== Жизненный цикл сессии
+
+1. **Uninitialized** → Ожидание запроса `initialize`
+2. **Initialized** → Получена инициализация, ожидание уведомления `notifications/initialized`
+3. **Operation** → Активная обработка запросов (`tools/list`, `tools/call`, `ping`)
+4. **Shutdown** → Завершение работы сервера
+
+== Расширение возможностей
+
+=== Добавление нового типа контента
+
+Создайте структуру в `msg_types.hpp` и добавьте в `VariantContent`:
+
+[source,cpp]
+----
+struct CustomContent {
+  std::string type = "custom";
+  std::string data;
+  std::string mime_type;
+};
+
+// В msg_types.hpp:
+using VariantContent = std::variant<TextContent, ImageContent, EmbeddedResource, CustomContent>;
+----
+
+=== Поддержка новых методов MCP
+
+Расширьте `McpSession::handle_operation`:
+
+[source,cpp]
+----
+if (request.method == "resources/read") {
+    // Реализация чтения ресурсов
+    return make_response(resources_->read(request), request.id);
+}
+----
+
+== Тестирование
+
+Проект включает базовые примеры, служащие интеграционными тестами:
+
+[source,bash]
+----
+# Запуск тестового сервера
+xmake run create_server &
+
+# Отправка тестового запроса (через echo/nc)
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | nc localhost 8080
+----
+
+== Производительность
+
+* Оптимизированная сериализация через reflectcpp и yyjson
+* Минимальные копирования данных (использование `std::move`)
+* Эффективное чтение/запись через stdio
+* Поддержка многопоточности в планах (текущая версия single-threaded)
+
+== Устранение неполадок
+
+=== Ошибки компиляции
+
+* Убедитесь в поддержке C++20 вашим компилятором: `g++ --version`
+* Проверьте доступность Vcpkg: `xmake require --info`
+
+=== Проблемы с логированием
+
+Если не видно логов, проверьте уровень:
+
+[source,cpp]
+----
+spdlog::set_level(spdlog::level::trace); // Максимальная детализация
+spdlog::flush_on(spdlog::level::trace);
+----
+
+=== Ошибки инициализации
+
+Сервер ожидает корректный JSON-RPC запрос в течение 5 секунд. Используйте:
+
+[source,json]
+----
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",...}}
+----
+
+Затем отправьте уведомление:
+
+[source,json]
+----
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+----
+
+== Лицензия
+
+MIT License (TODO: добавить LICENSE файл)
+
+== Вклад в проект
+
+1. Форкните репозиторий
+2. Создайте ветку: `git checkout -b feature/my-feature`
+3. Примените форматирование: `clang-format -i src/**/*.cpp src/**/*.hpp`
+4. Проверьте статический анализ: `xmake check` (если сконфигурировано)
+5. Отправьте PR с описанием изменений
+
+== Благодарности
+
+* reflectcpp — за мощную систему рефлексии
+* spdlog — за высокопроизводительное логирование
+* MCP Team — за спецификацию протокола
+
+== Ссылки
+
+* https://spec.modelcontextprotocol.io[MCP Protocol Specification]
+* https://github.com/getml/reflect-cpp[reflectcpp Documentation]
+* https://github.com/gabime/spdlog[spdlog Documentation]
+* https://xmake.io[Xmake Documentation]
+
+== FAQ
+
+**Q: Можно ли добавить HTTP/SSE транспорт?**
+A: Да, реализуйте интерфейс `AbstractTransport`.
+
+**Q: Почему используется rfl::Generic?**
+A: Для гибкой работы с JSON-данными без потери типобезопасности.
+
+**Q: Как добавить аутентификацию?**
+A: В текущей реализации — через кастомный транспорт. Планируется встроенная поддержка.
+
+== Примечания
+
+Этот README файл был автоматически сгенерирован AI-ассистентом(Kimi k2) на основе анализа исходного кода проекта PhoenixMCP.

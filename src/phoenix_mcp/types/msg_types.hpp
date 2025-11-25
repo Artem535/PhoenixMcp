@@ -12,351 +12,389 @@
 #include <rfl/Generic.hpp>
 #include <rfl/Flatten.hpp>
 
-
 namespace pxm::msg::types {
 
-/// @brief Type alias for request identifiers, which can be either integer or string
+/* ---------- Basic Types ---------- */
+
+/// @brief Request identifier used for correlating JSON-RPC requests and responses
+/// @details Can be either integer or string to accommodate different client implementations
 using RequestId = std::variant<int, std::string>;
 
-/// @brief Type alias for optional parameters map with generic values
-using OptionalParams = std::optional<std::map<std::string, rfl::Generic> >;
+/// @brief Container for optional method parameters
+/// @details Uses rfl::Generic to represent flexible JSON-like parameter objects
+using OptionalParams = std::optional<rfl::Generic>;
 
-/// @brief Type alias for result map with generic values
-using Result = std::map<std::string, rfl::Generic>;
+/// @brief Generic result type for successful responses
+/// @details Provides flexibility in returning various data structures from methods
+using Result = rfl::Generic;
 
-/// @brief Type alias for empty result (same structure as Result)
+/// @brief Structure representing an empty result
+/// @details Standard representation for operations that don't return meaningful data
 using EmptyResult = std::map<std::string, rfl::Generic>;
 
-/// @brief Type alias for progress tokens, which can be either integer or string
+/// @brief Token used to track progress of long-running operations
+/// @details Can be either integer or string identifier for progress reporting
 using ProgressToken = std::variant<int, std::string>;
 
-/// @brief Type alias for cursor strings used in pagination
+/// @brief Cursor for pagination through large result sets
+/// @details String-based pointer used to navigate between pages of results
 using Cursor = std::string;
 
-/// @brief Type alias for logging level strings
+/// @brief Specification of logging verbosity level
+/// @details String value representing standard log levels: "debug", "info", "warning", "error"
 using LoggingLevel = std::string;
 
-/// @brief Type alias for role strings
+/// @brief Identifier for participant role in conversation
+/// @details String value indicating role: "user", "assistant", or "system"
 using Role = std::string;
 
-/// @brief Structure representing a JSON-RPC request
+/* ---------- JSON-RPC Structures ---------- */
+
+/// @brief Basic JSON-RPC request structure
+/// @details Minimal structure containing essential fields for a JSON-RPC request
 struct Request {
-  /// @brief JSON-RPC protocol version, defaults to "2.0"
-  rfl::Rename<"jsonrpc", std::string> jsonrpc = "2.0";
-  /// @brief The method name to be invoked
-  rfl::Rename<"method", std::string> method;
-  /// @brief The request identifier
-  rfl::Rename<"id", RequestId> id;
-  /// @brief Optional parameters for the method
-  rfl::Rename<"params", OptionalParams> params;
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  std::string method; /// @brief Name of the method to be invoked
+  RequestId id; /// @brief Unique identifier for request-response correlation
+  OptionalParams params; /// @brief Optional parameters for the requested method
+
 };
 
+/// @brief Extended JSON-RPC request with optional parameters
+/// @details Complete request structure that includes parameters for method invocation
+struct MinimalRequest {
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  std::string method; /// @brief Name of the method to be invoked
+  RequestId id; /// @brief Unique identifier for request-response correlation
+};
 
-/// @brief Structure representing a JSON-RPC response
+/// @brief JSON-RPC response structure for successful operations
+/// @details Contains the result of a successfully processed request
 struct Response {
-  /// @brief JSON-RPC protocol version, defaults to "2.0"
-  rfl::Rename<"jsonrpc", std::string> jsonrpc = "2.0";
-  /// @brief The result of the method call
-  rfl::Rename<"result", Result> result;
-  /// @brief The request identifier
-  rfl::Rename<"id", RequestId> id;
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  Result result; /// @brief Result data from the processed request
+  RequestId id; /// @brief Identifier of the corresponding request
 };
 
-/// @brief Structure representing a JSON-RPC notification
+/// @brief Notification message structure
+/// @details One-way message from client to server that doesn't require a response
 struct Notification {
-  /// @brief JSON-RPC protocol version, defaults to "2.0"
-  rfl::Rename<"jsonrpc", std::string> jsonrpc = "2.0";
-  /// @brief Optional parameters for the notification
-  rfl::Rename<"params", OptionalParams> params;
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  std::string method; /// @brief Name of the method to be invoked
+  OptionalParams params; /// @brief Optional parameters for the notification
 };
 
-/// @brief Structure containing error details
+/// @brief Container for error information
+/// @details Holds detailed information about errors that occur during request processing
 struct ErrorData {
-  /// @brief Error code
-  rfl::Rename<"code", int> code;
-  /// @brief Error message
-  rfl::Rename<"message", std::string> message;
-  /// @brief Optional additional error data
-  rfl::Rename<"data", rfl::Generic> data;
+  int code; /// @brief Numeric error code following JSON-RPC standards
+  std::string message; /// @brief Human-readable description of the error
+  rfl::Generic data; /// @brief Additional context-specific error details
 };
 
-/// @brief Structure representing a JSON-RPC error response
+/// @brief Complete error response structure
+/// @details Response sent when a request cannot be successfully processed
 struct Error {
-  /// @brief JSON-RPC protocol version, defaults to "2.0"
-  rfl::Rename<"jsonrpc", std::string> jsonrpc = "2.0";
-  /// @brief The request identifier (can be null for parse errors)
-  rfl::Rename<"id", RequestId> id;
-  /// @brief The error details
-  rfl::Rename<"error", ErrorData> error;
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  RequestId id; /// @brief Identifier of the failed request
+  ErrorData error; /// @brief Detailed error information
 };
 
-/// @brief Structure for notification parameters containing request ID and optional reason
-struct NotificationParams {
-  /// @brief The request identifier this notification relates to
-  rfl::Rename<"requestId", RequestId> params;
-  /// @brief Optional reason for the notification
-  rfl::Rename<"reason", std::optional<std::string> > reason;
-};
+/* ---------- Pagination / Content / Tools ---------- */
 
-/// @brief Structure representing a cancellation notification
-struct CancelNotification {
-  /// @brief The base notification structure
-  rfl::Flatten<Notification> notification;
-  /// @brief The cancellation method name
-  rfl::Rename<"method", std::string> method = "notifications/cancelled";
-};
-
-
-/// @brief Structure containing roots capability parameters
-struct RootsParams {
-  /// @brief Indicates if the list has changed
-  rfl::Rename<"listChanged", std::optional<bool> > listChanged;
-};
-
-/// @brief Structure representing client capabilities
-struct ClientCapabilities {
-  /// @brief Optional experimental capabilities
-  rfl::Rename<"experimental", OptionalParams> experimental;
-  /// @brief Optional roots capabilities
-  rfl::Rename<"roots", std::optional<RootsParams> > roots;
-  /// @brief Optional sampling capabilities
-  rfl::Rename<"sampling", std::optional<rfl::Generic> > sampling;
-};
-
-/// @brief Structure representing implementation details (name and version)
-struct Implementation {
-  /// @brief Name of the implementation
-  rfl::Rename<"name", std::string> name;
-  /// @brief Version of the implementation
-  rfl::Rename<"version", std::string> version;
-};
-
-/// @brief Structure for initialize request parameters
-struct InitializeParams {
-  /// @brief Protocol version being used
-  rfl::Rename<"protocolVersion", std::string> protocolVersion;
-  /// @brief Client capabilities
-  rfl::Rename<"capabilities", ClientCapabilities> capabilities;
-  /// @brief Information about the client implementation
-  rfl::Rename<"clientInfo", Implementation> clientInfo;
-};
-
-/// @brief Structure representing an initialize request
-struct InitializeRequest {
-  /// @brief JSON-RPC protocol version, defaults to "2.0"
-  rfl::Rename<"jsonrpc", std::string> jsonrpc = "2.0";
-  /// @brief The method name, defaults to "initialize"
-  rfl::Rename<"method", std::string> method = "initialize";
-  /// @brief The request identifier
-  rfl::Rename<"id", RequestId> id;
-  /// @brief Optional parameters for initialization
-  rfl::Rename<"params", OptionalParams> params;
-};
-
-
-// -----------------------------------------------------------------------------
-// Server Capabilities Structures
-// -----------------------------------------------------------------------------
-
-/// @brief Structure for prompts capabilities
-struct PromptsCapabilities {
-  /// @brief Indicates if the prompts list has changed
-  rfl::Rename<"listChanged", std::optional<bool> > listChanged;
-};
-
-/// @brief Structure for resources capabilities
-struct ResourcesCapabilities {
-  /// @brief Indicates if resource subscription is supported
-  rfl::Rename<"subscribe", std::optional<bool> > subscribe;
-  /// @brief Indicates if the resources list has changed
-  rfl::Rename<"listChanged", std::optional<bool> > listChanged;
-};
-
-/// @brief Structure for tools capabilities
-struct ToolsCapabilities {
-  /// @brief Indicates if the tools list has changed
-  rfl::Rename<"listChanged", std::optional<bool> > listChanged;
-};
-
-/// @brief Structure representing server capabilities
-struct ServerCapabilities {
-  /// @brief Optional experimental capabilities
-  rfl::Rename<"experimental", OptionalParams> experimental;
-  /// @brief Optional logging capabilities
-  rfl::Rename<"logging", std::optional<rfl::Generic> > logging;
-  /// @brief Optional prompts capabilities
-  rfl::Rename<"prompts", std::optional<PromptsCapabilities> > prompts;
-  /// @brief Optional resources capabilities
-  rfl::Rename<"resources", std::optional<ResourcesCapabilities> > resources;
-  /// @brief Optional tools capabilities
-  rfl::Rename<"tools", std::optional<ToolsCapabilities> > tools;
-};
-
-
-/// @brief Structure representing the result of an initialize request
-struct InitializeResult {
-  /// @brief The protocol version supported by the server
-  rfl::Rename<"protocolVersion", std::string> protocolVersion;
-  /// @brief The server capabilities
-  rfl::Rename<"capabilities", ServerCapabilities> capabilities;
-  /// @brief Information about the server implementation
-  rfl::Rename<"serverInfo", Implementation> serverInfo;
-  /// @brief Optional initialization instruction
-  rfl::Rename<"instruction", std::optional<std::string> > instruction;
-};
-
-/// @brief Structure representing an initialization notification
-struct InitializeNotification {
-  /// @brief JSON-RPC protocol version, defaults to "2.0"
-  rfl::Rename<"jsonrpc", std::string> jsonrpc = "2.0";
-  /// @brief The notification method name
-  rfl::Rename<"method", std::string> method = "notification/initialized";
-  /// @brief Optional notification parameters
-  rfl::Rename<"params", OptionalParams> params;
-};
-
-/// @brief Structure representing a ping request
-struct PingRequest {
-  /// @brief JSON-RPC protocol version, defaults to "2.0"
-  rfl::Rename<"jsonrpc", std::string> jsonrpc = "2.0";
-  /// @brief The method name, defaults to "ping"
-  rfl::Rename<"method", std::string> method = "ping";
-  /// @brief The request identifier
-  rfl::Rename<"id", RequestId> id;
-  /// @brief Optional parameters for the ping request
-  rfl::Rename<"params", OptionalParams> params;
-};
-
-/// @brief Structure containing parameters for paginated requests
+/// @brief Parameters for paginated requests
+/// @details Controls how paginated data retrieval is performed
 struct PaginatedRequestParams {
-  /// @brief Optional cursor for pagination
-  rfl::Rename<"cursor", std::optional<Cursor> > cursor;
+  std::optional<Cursor> cursor;
+  /// @brief Optional cursor for resuming pagination
 };
 
-/// @brief Structure representing a paginated request
+/// @brief Wrapper for requests that support pagination
+/// @details Provides a standardized way to handle paginated operations
 struct PaginatedRequest {
-  /// @brief Optional pagination parameters
-  rfl::Rename<"params", std::optional<PaginatedRequestParams> > params;
+  /// @brief Optional pagination control parameters
+  std::optional<PaginatedRequestParams> params;
 };
 
-/// @brief Structure representing an input schema for tool parameters
+/// @brief Schema definition for tool input parameters
+/// @details Defines the structure and validation rules for tool inputs
 struct InputSchema {
-  /// @brief Schema type, always "object"
-  rfl::Rename<"type", std::string> type = "object";
-  /// @brief Schema properties map
-  rfl::Rename<"properties", OptionalParams> properties;
-  /// @brief Optional list of required property names
-  rfl::Rename<"required", std::optional<std::vector<std::string> > > required;
+  std::string type = "object"; /// @brief JSON schema type (fixed to "object")
+  OptionalParams properties;
+  /// @brief Definition of object properties
+   /// @brief List of property names that are required
+  std::optional<std::vector<std::string> > required;
 };
 
-/// @brief Structure representing a tool with name, description, and input schema
+/// @brief Definition of an available tool
+/// @details Contains metadata and input schema for a callable tool
 struct Tool {
-  /// @brief The tool name
-  rfl::Rename<"name", std::string> name;
-  /// @brief Optional tool description
-  rfl::Rename<"description", std::optional<std::string> > description;
-  /// @brief The input schema for the tool
-  rfl::Rename<"inputSchema", InputSchema> inputSchema;
+  std::string name;
+  /// @brief Unique identifier for the tool
+   /// @brief Optional human-readable description of tool functionality
+  std::optional<std::string> description;
+  /// @brief Schema defining valid input parameters for the tool
+  rfl::Rename<"inputSchema", InputSchema> input_schema;
 };
 
-/// @brief Structure for requesting a list of tools
-struct ListToolsRequest {
-  /// @brief The method name, defaults to "tools/list"
-  rfl::Rename<"method", std::string> method = "tools/list";
-  /// @brief Optional pagination parameters
-  rfl::Rename<"params", std::optional<PaginatedRequestParams> > params;
-};
-
-/// @brief Structure representing the result of a list tools request
+/// @brief Result structure for listing available tools
+/// @details Contains the complete list of tools exposed by the server
 struct ListToolsResult {
-  /// @brief Vector of available tools
-  rfl::Rename<"tools", std::vector<Tool> > tools;
+  std::vector<Tool> tools; /// @brief Collection of available tools
 };
 
-/// @brief Structure representing text content
+/* --- Content types --- */
+
+/// @brief Text content representation
+/// @details Structure for plain text content
 struct TextContent {
-  /// @brief Content type, always "text"
-  rfl::Rename<"type", std::string> type = "text";
-  /// @brief The actual text content
-  rfl::Rename<"text", std::string> text;
+  std::string type = "text"; /// @brief Content type discriminator
+  std::string text; /// @brief Actual text content
 };
 
-/// @brief Structure representing image content
+/// @brief Image content representation
+/// @details Structure for image data
 struct ImageContent {
-  /// @brief Content type, always "image"
-  rfl::Rename<"type", std::string> type = "image";
-  /// @brief Image data in base64 format
-  rfl::Rename<"data", std::string> data;
-  /// @brief MIME type of the image
-  rfl::Rename<"mimeType", std::string> mimeType;
+  std::string type = "image"; /// @brief Content type discriminator
+  std::string data;
+  /// @brief Image data (typically base64 encoded)
+   /// @brief MIME type of the image (e.g., "image/png")
+  rfl::Rename<"mimeType", std::string> mime_type;
 };
 
-
-/// @brief Structure representing a resource content with URI and optional MIME type
+/// @brief Generic resource reference
+/// @details Points to an external resource by URI
 struct ResourceContent {
-  /// @brief URI of the resource
-  rfl::Rename<"uri", std::string> uri;
-  /// @brief Optional MIME type of the resource
-  rfl::Rename<"mimeType", std::optional<std::string> > mimeType;
+  std::string uri;
+  /// @brief Uniform Resource Identifier
+   /// @brief Optional MIME type of the referenced resource
+  rfl::Rename<"mimeType", std::optional<std::string> > mime_type;
 };
 
-/// @brief Structure representing text resource content
+/// @brief Text resource content
+/// @details Resource that contains text data
 struct TextResourceContent {
-  /// @brief Base resource content structure
+  /// @brief Inherited resource metadata
   rfl::Flatten<ResourceContent> flatten;
-  /// @brief The text content of the resource
-  rfl::Rename<"text", std::string> text;
+  std::string text; /// @brief Text content of the resource
 };
 
-/// @brief Structure representing blob resource content
+/// @brief Binary resource content
+/// @details Resource that contains binary/blob data
 struct BlobResourceContent {
-  /// @brief Base resource content structure
+  /// @brief Inherited resource metadata
   rfl::Flatten<ResourceContent> flatten;
-  /// @brief The blob content of the resource in base64
-  rfl::Rename<"blob", std::string> blob;
+  std::string blob; /// @brief Binary content of the resource
 };
 
-
-/// @brief Structure representing an embedded resource
+/// @brief Embedded resource reference
+/// @details Represents a resource embedded within content
 struct EmbeddedResource {
-  /// @brief Content type, always "resource"
-  rfl::Rename<"type", std::string> type = "resource";
-  /// @brief The embedded resource content (either text or blob)
-  rfl::Rename<"resource", std::variant<
-                TextResourceContent, BlobResourceContent> > embedded;
+  std::string type = "resource";
+  /// @brief Content type discriminator
+   /// @brief Actual resource content (text or binary)
+  std::variant<TextResourceContent, BlobResourceContent> resource;
 };
 
-/// @brief Structure representing the result of a tool call
+/// @brief Variant type for different content types
+/// @details Can hold any of the supported content structures
+using VariantContent = std::variant<TextContent, ImageContent, EmbeddedResource>
+;
+
+/// @brief Result of a tool execution
+/// @details Contains output content from tool execution
 struct CallToolResult {
-  /// @brief Vector of content returned by the tool
-  rfl::Rename<"content", std::vector<std::variant<
-                TextContent, ImageContent, EmbeddedResource> > > content;
-  /// @brief Optional flag indicating if the tool call resulted in an error
-  rfl::Rename<"isError", std::optional<bool> > isError;
+  /// @brief Output content produced by the tool
+  std::vector<VariantContent> content;
+  /// @brief Optional flag indicating if result represents an error
+  rfl::Rename<"isError", std::optional<bool> > is_error;
 };
 
-/// @brief Structure containing parameters for a tool call
+/* ---------- Tool Calls ---------- */
+
+/// @brief Parameters for calling a tool
+/// @details Specifies which tool to call and with what arguments
 struct CallToolParams {
-  /// @brief The name of the tool to call
-  rfl::Rename<"name", std::string> name;
-  /// @brief Arguments to pass to the tool
-  rfl::Rename<"arguments", OptionalParams> arguments;
+  std::string name; /// @brief Name of the tool to invoke
+  OptionalParams arguments; /// @brief Arguments to pass to the tool
 };
 
-/// @brief Structure representing a tool call request
+/// @brief JSON schema property definition
+/// @details Defines properties within a JSON schema
+struct PropertySchema {
+  std::string type; /// @brief Data type of the property
+};
+
+/// @brief Complete tool input schema with references
+/// @details Extended schema definition supporting JSON schema references
+struct ToolInputSchema {
+  /// @brief JSON schema version identifier
+  rfl::Rename<"$schema", std::string> schema;
+  /// @brief Reference to another schema definition
+  rfl::Rename<"$ref", std::string> ref;
+  /// @brief Local schema definitions for reuse
+  rfl::Rename<"$defs", std::map<std::string, InputSchema> > defs;
+};
+
+/* ---------- Requests ---------- */
+
+/// @brief Initialization request from client
+/// @details First message sent by client to establish connection
+struct InitializeRequest {
+  /// @brief Inherited JSON-RPC request fields
+  rfl::Flatten<Request> flatten;
+};
+
+/// @brief Ping request for connectivity testing
+/// @details Used to check server availability and responsiveness
+struct PingRequest {
+  /// @brief Inherited JSON-RPC request fields
+  rfl::Flatten<Request> flatten;
+};
+
+/// @brief Request to list available tools
+/// @details Asks server to return all registered tools
+struct ListToolsRequest {
+  /// @brief Inherited JSON-RPC request fields
+  rfl::Flatten<Request> flatten;
+};
+
+/// @brief Request to execute a specific tool
+/// @details Invokes a tool with specified arguments
 struct CallToolRequest {
-  /// @brief The method name, defaults to "tools/call"
-  rfl::Rename<"method", std::string> method = "tools/call";
-  /// @brief Optional pagination parameters
-  rfl::Rename<"params", std::optional<PaginatedRequestParams> > params;
+  /// @brief Inherited JSON-RPC request fields
+  rfl::Flatten<MinimalRequest> flatten;
+  /// @brief Optional parameters specifying tool and arguments
+  std::optional<CallToolParams> params;
 };
 
-/// @brief Structure representing a notification when the tool list changes
-struct ToolListChangedNotification {
-  /// @brief Base notification structure
+/* ---------- Notifications ---------- */
+
+/// @brief Cancellation notification
+/// @details Informs server that a previous request has been cancelled
+struct CancelNotification {
+  /// @brief Inherited notification fields
   rfl::Flatten<Notification> flatten;
-  /// @brief The notification method name
-  rfl::Rename<"method", std::string> method = "notification/tools/listChanged";
 };
 
-}
+/// @brief Initialization complete notification
+/// @details Sent by server after successful initialization
+struct InitializeNotification {
+  rfl::Flatten<Notification> flatten;
+  /// @brief Inherited notification fields
+};
+
+/// @brief Tools list changed notification
+/// @details Informs client that available tools have changed
+struct ToolListChangedNotification {
+  /// @brief Inherited notification fields
+  rfl::Flatten<Notification> flatten;
+};
+
+/* ---------- Capability Parameters ---------- */
+
+/// @brief Parameters for cancellation notifications
+/// @details Provides context for why an operation was cancelled
+struct NotificationParams {
+  RequestId request_id; /// @brief ID of the cancelled request
+  std::optional<std::string> reason; /// @brief Optional reason for cancellation
+};
+
+/// @brief Parameters for roots capability
+/// @details Configuration for root directory monitoring
+struct RootsParams {
+  rfl::Rename<"listChanged", std::optional<bool>> list_changed; /// @brief Whether list of roots can change
+};
+
+/// @brief Client capabilities declaration
+/// @details What features the client supports
+struct ClientCapabilities {
+  OptionalParams experimental; /// @brief Experimental features support
+  std::optional<RootsParams> roots; /// @brief Roots monitoring capability
+  std::optional<rfl::Generic> sampling; /// @brief Sampling capability
+};
+
+/// @brief Server implementation metadata
+/// @details Information about server software
+struct Implementation {
+  std::string name; /// @brief Server name
+  std::string version; /// @brief Server version
+};
+
+/// @brief Parameters for initialization request
+/// @details Contains client capabilities and metadata for setup
+struct InitializeParams {
+  /// @brief MCP protocol version supported by client
+  rfl::Rename<"protocolVersion", std::string> protocol_version;
+
+  /// @brief Features supported by the client
+  ClientCapabilities capabilities;
+
+  /// @brief Information about the connecting client
+  rfl::Rename<"clientInfo", Implementation> client_info;
+};
+
+/* ---------- Server Capabilities ---------- */
+
+/// @brief Prompts-related server capabilities
+/// @details What prompt-related features the server supports
+struct PromptsCapabilities {
+  /// @brief Whether prompt list can change dynamically
+  rfl::Rename<"listChanged", std::optional<bool> > list_changed;
+};
+
+/// @brief Resources-related server capabilities
+/// @details What resource-related features the server supports
+struct ResourcesCapabilities {
+  /// @brief Whether clients can subscribe to resource changes
+  rfl::Rename<"subscribe", std::optional<bool> > subscribe;
+  /// @brief Whether resource list can change dynamically
+  rfl::Rename<"listChanged", std::optional<bool> > list_changed;
+};
+
+/// @brief Tools-related server capabilities
+/// @details What tool-related features the server supports
+struct ToolsCapabilities {
+  /// @brief Whether tool list can change dynamically
+  rfl::Rename<"listChanged", std::optional<bool> > list_changed;
+};
+
+/// @brief Complete server capabilities declaration
+/// @details All features supported by the server
+struct ServerCapabilities {
+  OptionalParams experimental; /// @brief Experimental features
+  std::optional<rfl::Generic> logging; /// @brief Logging capability
+  std::optional<PromptsCapabilities> prompts; /// @brief Prompts capability
+  std::optional<ResourcesCapabilities> resources;
+  /// @brief Resources capability
+  std::optional<ToolsCapabilities> tools; /// @brief Tools capability
+};
+
+/// @brief Result of successful initialization
+/// @details Server capabilities and metadata sent to client
+struct InitializeResult {
+  /// @brief MCP protocol version supported by server
+  rfl::Rename<"protocolVersion", std::string> protocol_version;
+
+  ServerCapabilities capabilities;
+  /// @brief Features supported by this server
+
+  /// @brief Information about this server instance
+  rfl::Rename<"serverInfo", Implementation> server_info;
+
+  std::optional<std::string> instruction;
+  /// @brief Optional instruction for client behavior
+};
+
+/// @brief JSON-RPC wrapper for initialization result
+/// @details Complete response structure for initialize request
+struct InitializeResultRPC {
+  /// @brief JSON-RPC protocol version
+  std::string jsonrpc = "2.0";
+  /// @brief ID of the original initialize request
+  RequestId id;
+  /// @brief Actual initialization result data
+  InitializeResult result;
+};
+
+} // namespace pxm::msg::types

@@ -6,6 +6,8 @@
 
 #include <string>
 
+
+namespace pxm::server {
 /**
  * @brief Abstract base class for transport implementations
  *
@@ -40,3 +42,4 @@ public:
    */
   virtual void write_msg(const std::string& msg) = 0;
 };
+}
