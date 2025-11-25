@@ -1,9 +1,11 @@
 = PhoenixMCP
-:toc: left
+:toc: auto
 :toclevels: 3
 :source-highlighter: rouge
 :icons: font
-:sectanchors:
+
+WARNING: 🚧 Beta Version — Under Active Development
+
 
 == Description
 
@@ -427,7 +429,7 @@ Then send notification:
 
 == License
 
-MIT License (TODO: add LICENSE file)
+MIT License
 
 == Contributing
 
