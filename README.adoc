@@ -312,30 +312,39 @@ registry->register_tool<FileReadInput>(
 
 == Architecture
 
-[plantuml,format=svg]
-----
-@startuml
-component "Client" as Client
-component "PhoenixMCP Server" as Server
+```mermaid
+graph TD
+    subgraph "Client"
+        C[Client]
+    end
 
-package "Transport Layer" {
-  [AbstractTransport] <|- [StdioTransport]
-}
+    subgraph "PhoenixMCP Server"
+        subgraph "Transport Layer"
+            AT[AbstractTransport]
+            ST[StdioTransport]
+        end
 
-package "Core Server" {
-  [Server] --> [McpSession] : manages
-  [McpSession] --> [ToolRegistry] : uses
-}
+        subgraph "Core Server"
+            S[Server]
+            MS[McpSession]
+            TR[ToolRegistry]
+        end
 
-package "Types" {
-  [msg_types.hpp] ..> [McpSession]
-}
+        subgraph "Types"
+            MT[msg_types.hpp]
+        end
+    end
 
-Client --> StdioTransport : stdin/stdout
-StdioTransport --> McpSession : JSON-RPC
-ToolRegistry --> msg_types.hpp : data types
-@enduml
-----
+    ST -.->|implements| AT
+    S -->|manages| MS
+    MS -->|uses| TR
+    MT -.->|uses| MS
+
+    C -->|stdin/stdout| ST
+    ST -->|JSON-RPC| MS
+    TR -->|data types| MT
+```
+
 
 === Session Lifecycle
 
