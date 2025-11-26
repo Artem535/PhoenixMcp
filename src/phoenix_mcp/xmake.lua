@@ -2,7 +2,7 @@ add_rules("mode.release", "mode.debug")
 
 set_languages("c++20")
 
-add_requires("vcpkg::reflectcpp")
+add_requires("vcpkg::reflectcpp 0.22.0")
 add_requires("vcpkg::yyjson")
 add_requires("vcpkg::spdlog")
 
