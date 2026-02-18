@@ -8,7 +8,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "mcp_session.h"
+#include "mcp_request_handler.h"
 #include "../constants/constants.hpp"
 #include "../transport/abstract_transport.h"
 #include "../tool_registry/tool_registry.h"
@@ -61,7 +61,7 @@ private:
   std::string instruction_;
   msg::types::ServerCapabilities server_capabilities_;
 
-  std::unique_ptr<McpSession> session_;
+  std::unique_ptr<McpRequestHandler> request_handler_;
 
   ///< Transport mechanism for communication
   std::unique_ptr<AbstractTransport> transport_;

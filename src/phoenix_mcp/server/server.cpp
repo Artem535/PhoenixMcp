@@ -26,9 +26,8 @@ Server::Server(std::string name, std::string version,
 
   instruction_ = std::move(instruction);
 
-  session_ = std::make_unique<McpSession>(server_capabilities_, server_info_,
-                                          instruction_,
-                                          std::move(tool_registry));
+  request_handler_ = std::make_unique<McpRequestHandler>(
+      server_capabilities_, server_info_, instruction_, std::move(tool_registry));
 
 }
 
@@ -62,8 +61,9 @@ void Server::start_server_() {
       break;
     }
 
-    if (const auto result = session_->handle_input(json); result.has_value()) {
-      const auto res_str = rfl::json::write(result.value());
+    if (const auto result = request_handler_->handle_json(json);
+        result.has_value()) {
+      const auto& res_str = result.value();
       spdlog::debug("Server::start_server_| Write message: {}", res_str);
       transport_->write_msg(res_str);
     }
