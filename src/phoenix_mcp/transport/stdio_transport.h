@@ -2,14 +2,12 @@
 // Created by artem.d on 09.11.2025.
 //
 #pragma once
-#include <spdlog/spdlog.h>
-#include "abstract_transport.h"
+
+#include "i_transport.h"
 
 namespace pxm::server {
-class StdioTransport final : public AbstractTransport {
+class StdioTransport final : public ITransport {
 public:
-  std::string read_msg() override;
-
-  void write_msg(const std::string& msg) override;
+  int run(Handler on_message) override;
 };
-}
+} // namespace pxm::server

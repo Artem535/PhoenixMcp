@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -24,6 +25,7 @@ public:
   std::optional<std::string> handle_json(const std::string& request_json);
 
 private:
+  std::mutex mutex_;
   std::unique_ptr<McpSession> session_;
 };
 
