@@ -5,7 +5,7 @@ add_defines("GLOG_USE_GLOG_EXPORT")
 
 includes("src/phoenix_mcp/xmake.lua")
 
-add_requires("vcpkg::reflectcpp")
+add_requires("vcpkg::reflectcpp 0.22.0")
 add_requires("vcpkg::yyjson")
 add_requires("vcpkg::spdlog")
 add_requires("crow")

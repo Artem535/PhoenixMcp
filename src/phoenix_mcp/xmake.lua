@@ -30,21 +30,22 @@ end
 target("phoenix_mcp")
 	set_kind("static")
 	add_files("*/*.cpp", {public=true})
-	add_packages("vcpkg::reflectcpp",
-	"vcpkg::yyjson",
-	"vcpkg::spdlog",
-	"crow",
-	"vcpkg::folly",
-	"vcpkg::glog",
-	"vcpkg::gflags",
-	"vcpkg::boost-context",
-	"vcpkg::libevent",
-	"vcpkg::double-conversion",
-	"vcpkg::drogon",
-	"vcpkg::trantor",
-	"vcpkg::jsoncpp",
-	"vcpkg::openssl",
-	"vcpkg::brotli",
-	"vcpkg::zlib",
-	"vcpkg::libuuid",
-	"vcpkg::c-ares")
+	add_includedirs(".", {public = true})
+	add_packages("vcpkg::reflectcpp", {public = true})
+	add_packages("vcpkg::yyjson", {public = true})
+	add_packages("vcpkg::spdlog", {public = true})
+	add_packages("crow", {public = true})
+	add_packages("vcpkg::folly", {public = true})
+	add_packages("vcpkg::glog", {public = true})
+	add_packages("vcpkg::gflags", {public = true})
+	add_packages("vcpkg::boost-context", {public = true})
+	add_packages("vcpkg::libevent", {public = true})
+	add_packages("vcpkg::double-conversion", {public = true})
+	add_packages("vcpkg::drogon", {public = true})
+	add_packages("vcpkg::trantor", {public = true})
+	add_packages("vcpkg::jsoncpp", {public = true})
+	add_packages("vcpkg::openssl", {public = true})
+	add_packages("vcpkg::brotli", {public = true})
+	add_packages("vcpkg::zlib", {public = true})
+	add_packages("vcpkg::libuuid", {public = true})
+	add_packages("vcpkg::c-ares", {public = true})
