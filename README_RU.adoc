@@ -385,6 +385,30 @@ xmake run create_server &
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | nc localhost 8080
 ----
 
+=== HTTP Async Smoke Test
+
+Пример `create_server_http` использует `DrogonTransport` и экспортирует:
+
+* `sum_tool` — синхронный инструмент
+* `delayed_sum_tool` — coroutine tool с `ExecutionPolicy::IoBound`
+* `delayed_sum_struct_tool` — coroutine tool со структурированным ответом
+
+Запустите HTTP сервер:
+
+[source,bash]
+----
+xmake run create_server_http
+----
+
+Затем в другом терминале запустите smoke test:
+
+[source,bash]
+----
+bash examples/create_server_http/smoke_test.sh
+----
+
+Если установлен `hey`, скрипт дополнительно отправит небольшую параллельную нагрузку.
+
 == Производительность
 
 * Оптимизированная сериализация через reflectcpp и yyjson
