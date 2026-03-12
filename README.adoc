@@ -419,6 +419,28 @@ bash examples/create_server_http/smoke_test.sh
 
 If `hey` is installed, the script also sends a small parallel load.
 
+=== HTTP Benchmark
+
+For a quick HTTP benchmark against `DrogonTransport`, run:
+
+[source,bash]
+----
+bash examples/create_server_http/benchmark.sh
+----
+
+Useful environment variables:
+
+* `REQUESTS` — total number of requests for `hey` (default: `100`)
+* `CONCURRENCY` — parallel workers (default: `8`)
+* `DELAY_MS` — artificial delay for `delayed_sum_tool` (default: `1000`)
+
+Example:
+
+[source,bash]
+----
+REQUESTS=200 CONCURRENCY=16 DELAY_MS=250 bash examples/create_server_http/benchmark.sh
+----
+
 == Performance
 
 * Optimized serialization via reflectcpp and yyjson

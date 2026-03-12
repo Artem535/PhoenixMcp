@@ -409,6 +409,28 @@ bash examples/create_server_http/smoke_test.sh
 
 Если установлен `hey`, скрипт дополнительно отправит небольшую параллельную нагрузку.
 
+=== HTTP Benchmark
+
+Для быстрого HTTP benchmark поверх `DrogonTransport` запустите:
+
+[source,bash]
+----
+bash examples/create_server_http/benchmark.sh
+----
+
+Полезные переменные окружения:
+
+* `REQUESTS` — общее количество запросов для `hey` (по умолчанию: `100`)
+* `CONCURRENCY` — уровень параллелизма (по умолчанию: `8`)
+* `DELAY_MS` — искусственная задержка для `delayed_sum_tool` (по умолчанию: `1000`)
+
+Пример:
+
+[source,bash]
+----
+REQUESTS=200 CONCURRENCY=16 DELAY_MS=250 bash examples/create_server_http/benchmark.sh
+----
+
 == Производительность
 
 * Оптимизированная сериализация через reflectcpp и yyjson
