@@ -22,6 +22,11 @@ add_requires("vcpkg::zlib")
 add_requires("vcpkg::libuuid")
 add_requires("vcpkg::c-ares")
 
+local vcpkg_root = os.getenv("VCPKG_ROOT")
+if vcpkg_root then
+    add_includedirs(path.join(vcpkg_root, "installed", "x64-linux", "include"))
+end
+
 target("phoenix_mcp")
 	set_kind("static")
 	add_files("*/*.cpp", {public=true})
