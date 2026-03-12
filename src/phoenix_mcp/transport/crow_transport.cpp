@@ -1,8 +1,12 @@
 #include "crow_transport.h"
 
+#include <folly/coro/BlockingWait.h>
 #include <spdlog/spdlog.h>
 
 #if __has_include(<crow.h>)
+#ifdef signal_add
+#undef signal_add
+#endif
 #include <crow.h>
 #define PXM_HAS_CROW 1
 #else
@@ -14,7 +18,9 @@ namespace pxm::server {
 CrowTransport::CrowTransport() : CrowTransport(Config{}) {
 }
 
-CrowTransport::CrowTransport(Config cfg) : cfg_(std::move(cfg)) {
+CrowTransport::CrowTransport(
+    Config cfg, std::shared_ptr<runtime::Runtime> runtime)
+    : cfg_(std::move(cfg)), runtime_(std::move(runtime)) {
 }
 
 int CrowTransport::run(Handler on_message) {
@@ -37,20 +43,33 @@ int CrowTransport::run(Handler on_message) {
       });
 
   app.route_dynamic(endpoint)
-      .methods(crow::HTTPMethod::POST)([&](const crow::request& req) {
-        if (req.body.empty()) {
-          return crow::response(400, "Request body is empty");
-        }
+      .methods(crow::HTTPMethod::POST)(
+          [&](const crow::request& req, crow::response& res) {
+            if (req.body.empty()) {
+              res.code = 400;
+              res.write("Request body is empty");
+              res.end();
+              return;
+            }
 
-        const auto response = on_message(req.body);
-        if (!response.has_value()) {
-          return crow::response(204);
-        }
+            auto task = on_message(req.body);
+            auto executor = runtime_->cpu_executor();
+            executor->add(
+                [task = std::move(task), &res]() mutable {
+                  const auto response =
+                      folly::coro::blockingWait(std::move(task));
+                  if (!response.has_value()) {
+                    res.code = 204;
+                    res.end();
+                    return;
+                  }
 
-        crow::response resp{200, *response};
-        resp.set_header("content-type", "application/json");
-        return resp;
-      });
+                  res.code = 200;
+                  res.set_header("content-type", "application/json");
+                  res.write(*response);
+                  res.end();
+                });
+          });
 
   spdlog::info("CrowTransport| Listening on {}:{}{}",
                cfg_.bind_address, cfg_.port, endpoint);

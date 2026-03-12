@@ -1,5 +1,7 @@
 #pragma once
 
+#include <folly/coro/Task.h>
+
 #include <functional>
 #include <optional>
 #include <string>
@@ -9,7 +11,8 @@ namespace pxm::server {
 
 class ITransport {
 public:
-  using Handler = std::function<std::optional<std::string>(std::string_view)>;
+  using Handler = std::function<
+      folly::coro::Task<std::optional<std::string>>(std::string_view)>;
 
   virtual ~ITransport() = default;
   virtual int run(Handler on_message) = 0;

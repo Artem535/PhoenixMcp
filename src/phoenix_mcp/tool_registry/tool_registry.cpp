@@ -4,11 +4,19 @@
 
 #include "tool_registry.h"
 
+#include <folly/coro/BlockingWait.h>
+
 #include <ranges>
 
 namespace pxm::tool {
 msg::types::CallToolResult ToolRegistry::call_tool(const std::string& name,
                                                    const rfl::Generic& params) {
+  return folly::coro::blockingWait(call_tool_async(name, params));
+}
+
+folly::coro::Task<msg::types::CallToolResult>
+ToolRegistry::call_tool_async(const std::string& name,
+                              const rfl::Generic& params) {
   // Find the tool in the registry
   const auto& tool = tools_.find(name);
   if (tool == tools_.end()) {
@@ -17,8 +25,7 @@ msg::types::CallToolResult ToolRegistry::call_tool(const std::string& name,
   }
 
   // Call the tool
-  const auto result = tool->second(params);
-  return result;
+  co_return co_await tool->second(params);
 }
 
 std::vector<pxm::msg::types::Tool> ToolRegistry::get_tool_list() {

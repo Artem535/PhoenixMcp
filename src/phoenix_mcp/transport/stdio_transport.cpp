@@ -4,6 +4,8 @@
 
 #include "stdio_transport.h"
 
+#include <folly/coro/BlockingWait.h>
+
 #include <iostream>
 #include <spdlog/spdlog.h>
 
@@ -22,7 +24,7 @@ int StdioTransport::run(Handler on_message) {
       return 0;
     }
 
-    const auto response = on_message(line);
+    const auto response = folly::coro::blockingWait(on_message(line));
     if (!response.has_value()) {
       continue;
     }

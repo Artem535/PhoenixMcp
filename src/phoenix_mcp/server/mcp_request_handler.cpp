@@ -4,6 +4,8 @@
 
 #include "mcp_request_handler.h"
 
+#include <folly/coro/BlockingWait.h>
+
 #include <utility>
 
 namespace pxm::server {
@@ -20,12 +22,17 @@ namespace pxm::server {
 
   std::optional<std::string> McpRequestHandler::handle_json(
     const std::string &request_json) {
-    std::lock_guard lock(mutex_);
-    const auto result = session_->handle_input(request_json);
+    return folly::coro::blockingWait(handle_json_async(request_json));
+  }
+
+  folly::coro::Task<std::optional<std::string>>
+  McpRequestHandler::handle_json_async(std::string request_json) {
+    const auto result = co_await session_->handle_input_async(
+        std::move(request_json));
     if (!result.has_value()) {
-      return std::nullopt;
+      co_return std::nullopt;
     }
 
-    return rfl::json::write(result.value());
+    co_return rfl::json::write(result.value());
   }
 } // namespace pxm::server

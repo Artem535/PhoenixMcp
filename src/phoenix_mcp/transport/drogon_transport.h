@@ -10,7 +10,7 @@
 
 namespace pxm::server {
 
-class CrowTransport final : public ITransport {
+class DrogonTransport final : public ITransport {
 public:
   struct Config {
     std::string bind_address = "0.0.0.0";
@@ -20,8 +20,8 @@ public:
     int concurrency = 1;
   };
 
-  CrowTransport();
-  explicit CrowTransport(
+  DrogonTransport();
+  explicit DrogonTransport(
       Config cfg,
       std::shared_ptr<runtime::Runtime> runtime =
           runtime::make_default_runtime());

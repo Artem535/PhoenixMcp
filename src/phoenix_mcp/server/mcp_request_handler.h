@@ -4,8 +4,9 @@
 
 #pragma once
 
+#include <folly/coro/Task.h>
+
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 
@@ -23,9 +24,10 @@ public:
 
   /// Returns JSON-RPC response body if request requires response.
   std::optional<std::string> handle_json(const std::string& request_json);
+  folly::coro::Task<std::optional<std::string>> handle_json_async(
+      std::string request_json);
 
 private:
-  std::mutex mutex_;
   std::unique_ptr<McpSession> session_;
 };
 

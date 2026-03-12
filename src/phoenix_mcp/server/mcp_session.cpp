@@ -4,6 +4,8 @@
 
 #include "mcp_session.h"
 
+#include <folly/coro/BlockingWait.h>
+
 #include <utility>
 
 namespace pxm::server {
@@ -23,35 +25,56 @@ McpSession::McpSession(
 
 std::optional<rfl::Generic>
 McpSession::handle_input(const std::string& request) {
+  return folly::coro::blockingWait(handle_input_async(request));
+}
+
+folly::coro::Task<std::optional<rfl::Generic>>
+McpSession::handle_input_async(std::string request) {
   if (const auto req = try_serialize_request(request); req.has_value())
-    return handle_request(*req);
+    co_return co_await handle_request_async(*req);
 
   if (const auto notif = try_serialize_notification(request); notif.has_value())
-    return handle_notification(*notif);
+    co_return handle_notification(*notif);
 
   spdlog::error("handle_input| Parsing Error");
-  return std::nullopt;
+  co_return std::nullopt;
 }
 
 rfl::Generic McpSession::handle_request(const msg::types::Request& request) {
-  if (has_init_timeout()) {
-    return create_error("Initialization timeout", request.id);
+  return folly::coro::blockingWait(handle_request_async(request));
+}
+
+folly::coro::Task<rfl::Generic>
+McpSession::handle_request_async(const msg::types::Request& request) {
+  Stage current_stage;
+  {
+    std::lock_guard lock(state_mutex_);
+
+    if (has_init_timeout()) {
+      co_return create_error("Initialization timeout", request.id);
+    }
+
+    current_stage = stage_;
+    if (current_stage == Stage::Uninitialized) {
+      co_return try_initialize(request);
+    }
+
+    if (current_stage == Stage::Initialized) {
+      co_return create_error("Waiting for 'notifications/initialized'",
+                             request.id);
+    }
+
+    if (current_stage == Stage::Shutdown) {
+      co_return create_error("Server is shutting down", request.id);
+    }
   }
 
-  switch (stage_) {
-    case Stage::Uninitialized:
-      return try_initialize(request);
-    case Stage::Operation:
-      return handle_operation(request);
-    case Stage::Initialized:
-      return create_error("Waiting for 'notifications/initialized'",
-                          request.id);
-    case Stage::Shutdown:
-      return create_error("Server is shutting down", request.id);
+  if (current_stage == Stage::Operation) {
+    co_return co_await handle_operation_async(request);
   }
 
   spdlog::error("McpSession::handle_input| Invalid stage");
-  return create_error("Something went wrong", request.id);
+  co_return create_error("Something went wrong", request.id);
 }
 
 bool McpSession::has_init_timeout() const {
@@ -112,19 +135,24 @@ rfl::Generic McpSession::make_response(const T& result,
 }
 
 rfl::Generic McpSession::handle_operation(const msg::types::Request& request) {
+  return folly::coro::blockingWait(handle_operation_async(request));
+}
+
+folly::coro::Task<rfl::Generic>
+McpSession::handle_operation_async(const msg::types::Request& request) {
   if (request.method == msg_t::constants::list_tools_request) {
     const auto tool_list = tool_registry_->get_tool_list();
     const auto tool_list_res = msg_t::ListToolsResult{.tools = tool_list};
-    return make_response(tool_list_res, request.id);
+    co_return make_response(tool_list_res, request.id);
   }
 
   // TODO: Refactor this
   if (request.method == msg_t::constants::call_tool_request) {
-    return call_tool(request);
+    co_return co_await call_tool_async(request);
   }
 
-  return create_error("Method not found", request.id,
-                      constants::msg_error::Invalid_request);
+  co_return create_error("Method not found", request.id,
+                         constants::msg_error::Invalid_request);
 }
 
 rfl::Generic McpSession::create_error(const std::string& msg,
@@ -154,8 +182,11 @@ McpSession::try_serialize_notification(const std::string& json) {
 // TODO: You must be void?
 std::optional<rfl::Generic> McpSession::handle_notification(
     const msg::types::Notification& notif) {
-
-  const bool is_initialize = stage_ == Stage::Initialized;
+  bool is_initialize = false;
+  {
+    std::lock_guard lock(state_mutex_);
+    is_initialize = stage_ == Stage::Initialized;
+  }
   const bool is_correct_method =
       notif.method == msg_t::constants::initialize_notification;
 
@@ -163,6 +194,7 @@ std::optional<rfl::Generic> McpSession::handle_notification(
                 is_initialize, is_correct_method);
 
   if (is_initialize && is_correct_method) {
+    std::lock_guard lock(state_mutex_);
     stage_ = Stage::Operation;
     spdlog::info("McpSession| Switch to operation stage");
   }
@@ -171,6 +203,12 @@ std::optional<rfl::Generic> McpSession::handle_notification(
 }
 
 rfl::Generic McpSession::call_tool(const msg::types::Request& request) const {
+  return folly::coro::blockingWait(
+      const_cast<McpSession*>(this)->call_tool_async(request));
+}
+
+folly::coro::Task<rfl::Generic>
+McpSession::call_tool_async(const msg::types::Request& request) {
   spdlog::debug("McpSession::call_tool| Call tool {}",
                 rfl::json::write(request));
 
@@ -180,7 +218,7 @@ rfl::Generic McpSession::call_tool(const msg::types::Request& request) const {
     msg_t::CallToolRequest>(generic).value();
 
   if (!opt_params.has_value()) {
-    return create_error("Invalid request", request.id);
+    co_return create_error("Invalid request", request.id);
   }
 
   const auto [name, arguments] = opt_params.value();
@@ -191,10 +229,10 @@ rfl::Generic McpSession::call_tool(const msg::types::Request& request) const {
       "McpSession::handle_operation| Call tool, args: {}",
       rfl::json::write(arguments));
 
-  const auto result = tool_registry_->
-      call_tool(name, arguments.value());
+  const auto result = co_await tool_registry_->call_tool_async(
+      name, arguments.value());
 
-  return make_response(result, request.id);
+  co_return make_response(result, request.id);
 }
 
 }

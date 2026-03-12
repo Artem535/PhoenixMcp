@@ -17,7 +17,7 @@ public:
 
   int run() {
     return transport_->run([this](const std::string_view msg) {
-      return handler_->handle_json(std::string(msg));
+      return handler_->handle_json_async(std::string(msg));
     });
   }
 

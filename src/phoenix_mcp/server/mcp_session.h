@@ -4,7 +4,10 @@
 
 #pragma once
 
+#include <folly/coro/Task.h>
+
 #include <chrono>
+#include <mutex>
 
 #include <rfl/Generic.hpp>
 #include <rfl/json.hpp>
@@ -42,11 +45,15 @@ public:
   /// @param request JSON string containing the request
   /// @return Response in rfl::Generic format
   std::optional<rfl::Generic> handle_input(const std::string& request);
+  folly::coro::Task<std::optional<rfl::Generic>> handle_input_async(
+      std::string request);
 
   /// @brief Handle structured request
   /// @param request Structured request object
   /// @return Response in rfl::Generic format
   rfl::Generic handle_request(const msg::types::Request& request);
+  folly::coro::Task<rfl::Generic> handle_request_async(
+      const msg::types::Request& request);
 
 private:
   /// @brief Server lifecycle stages
@@ -95,6 +102,8 @@ private:
   /// @param request Request to handle
   /// @return Response with operation result
   rfl::Generic handle_operation(const msg::types::Request& request);
+  folly::coro::Task<rfl::Generic> handle_operation_async(
+      const msg::types::Request& request);
 
   /// @brief Create standardized error response
   /// @param msg Error message
@@ -119,5 +128,9 @@ private:
 
 
   rfl::Generic call_tool(const msg::types::Request& request) const;
+  folly::coro::Task<rfl::Generic> call_tool_async(
+      const msg::types::Request& request);
+
+  mutable std::mutex state_mutex_;
 };
 }
