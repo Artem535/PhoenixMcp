@@ -106,6 +106,12 @@ rfl::Generic McpSession::try_initialize(const msg::types::Request& request) {
   stage_ = Stage::Initialized;
   spdlog::info("McpSession| Switch to initialized stage.");
 
+  return make_initialize_response(request.id);
+}
+
+rfl::Generic McpSession::make_initialize_response(
+    const msg::types::RequestId& id) const {
+
   const msg::types::InitializeResult result{
       .protocol_version = constants::kMcpVersion,
       .capabilities = server_capabilities_,
@@ -114,7 +120,7 @@ rfl::Generic McpSession::try_initialize(const msg::types::Request& request) {
   };
 
   const msg::types::InitializeResultRPC resp{
-      .id = request.id,
+      .id = id,
       .result = result
   };
 
@@ -140,6 +146,15 @@ rfl::Generic McpSession::handle_operation(const msg::types::Request& request) {
 
 folly::coro::Task<rfl::Generic>
 McpSession::handle_operation_async(const msg::types::Request& request) {
+  if (request.method == msg_t::constants::initialize_request) {
+    spdlog::info("McpSession| Repeated initialize request received.");
+    co_return make_initialize_response(request.id);
+  }
+
+  if (request.method == msg_t::constants::ping_request) {
+    co_return make_response(msg_t::EmptyResult{}, request.id);
+  }
+
   if (request.method == msg_t::constants::list_tools_request) {
     const auto tool_list = tool_registry_->get_tool_list();
     const auto tool_list_res = msg_t::ListToolsResult{.tools = tool_list};
@@ -151,7 +166,8 @@ McpSession::handle_operation_async(const msg::types::Request& request) {
     co_return co_await call_tool_async(request);
   }
 
-  co_return create_error("Method not found", request.id,
+  spdlog::error("McpSession| Method not found: {}", request.method);
+  co_return create_error("Method not found: " + request.method, request.id,
                          constants::msg_error::Invalid_request);
 }
 

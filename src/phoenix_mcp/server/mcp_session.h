@@ -93,6 +93,7 @@ private:
   /// @param request Initialization request object
   /// @return Response with initialization result
   rfl::Generic try_initialize(const msg::types::Request& request);
+  rfl::Generic make_initialize_response(const msg::types::RequestId& id) const;
 
   template <class T>
   rfl::Generic make_response(const T& result,
