@@ -21,6 +21,7 @@ add_requires("vcpkg::brotli")
 add_requires("vcpkg::zlib")
 add_requires("vcpkg::libuuid")
 add_requires("vcpkg::c-ares")
+add_requires("opentelemetry-cpp")
 
 local vcpkg_root = os.getenv("VCPKG_ROOT")
 if vcpkg_root then
@@ -49,3 +50,4 @@ target("phoenix_mcp")
 	add_packages("vcpkg::zlib", {public = true})
 	add_packages("vcpkg::libuuid", {public = true})
 	add_packages("vcpkg::c-ares", {public = true})
+	add_packages("opentelemetry-cpp", {public = true})

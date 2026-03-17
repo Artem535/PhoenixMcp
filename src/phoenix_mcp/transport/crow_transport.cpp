@@ -52,7 +52,13 @@ int CrowTransport::run(Handler on_message) {
               return;
             }
 
-            auto task = on_message(req.body);
+            ITransport::RequestEnvelope request;
+            request.body = req.body;
+            for (const auto& header : req.headers) {
+              request.headers.emplace(header.first, header.second);
+            }
+
+            auto task = on_message(std::move(request));
             auto executor = runtime_->cpu_executor();
             executor->add(
                 [task = std::move(task), &res]() mutable {

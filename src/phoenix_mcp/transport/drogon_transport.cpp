@@ -61,12 +61,26 @@ int DrogonTransport::run(Handler on_message) {
           return;
         }
 
-        auto task = on_message(body);
-        auto executor = runtime->cpu_executor();
-        executor->add(
-            [task = std::move(task), callback = std::move(callback)]() mutable {
-              const auto response = folly::coro::blockingWait(std::move(task));
+        ITransport::RequestEnvelope request;
+        request.body = std::string(body);
+        for (const auto& [header_name, header_value] : req->getHeaders()) {
+          request.headers.emplace(header_name, header_value);
+        }
+
+        std::move(on_message(std::move(request)))
+            .scheduleOn(runtime->cpu_executor())
+            .start([callback = std::move(callback)](
+                       folly::Try<std::optional<std::string>>&& result) mutable {
               auto resp = drogon::HttpResponse::newHttpResponse();
+              if (result.hasException()) {
+                resp->setStatusCode(drogon::k500InternalServerError);
+                resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+                resp->setBody(result.exception().what().toStdString());
+                callback(resp);
+                return;
+              }
+
+              auto response = result.value();
               if (!response.has_value()) {
                 resp->setStatusCode(drogon::k204NoContent);
                 callback(resp);

@@ -16,8 +16,8 @@ public:
   }
 
   int run() {
-    return transport_->run([this](const std::string_view msg) {
-      return handler_->handle_json_async(std::string(msg));
+    return transport_->run([this](ITransport::RequestEnvelope request) {
+      return handler_->handle_json_async(std::move(request));
     });
   }
 

@@ -24,7 +24,9 @@ int StdioTransport::run(Handler on_message) {
       return 0;
     }
 
-    const auto response = folly::coro::blockingWait(on_message(line));
+    ITransport::RequestEnvelope request;
+    request.body = std::move(line);
+    const auto response = folly::coro::blockingWait(on_message(std::move(request)));
     if (!response.has_value()) {
       continue;
     }
@@ -36,6 +38,7 @@ int StdioTransport::run(Handler on_message) {
 
     std::cout << *response << '\n';
     std::cout.flush();
+    line.clear();
   }
 }
 } // namespace pxm::server
