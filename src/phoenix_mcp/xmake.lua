@@ -21,7 +21,12 @@ add_requires("vcpkg::brotli")
 add_requires("vcpkg::zlib")
 add_requires("vcpkg::libuuid")
 add_requires("vcpkg::c-ares")
-add_requires("opentelemetry-cpp")
+
+local with_otel = os.getenv("PHOENIX_MCP_WITH_OTEL") == "1"
+
+if with_otel then
+    add_requires("opentelemetry-cpp")
+end
 
 local vcpkg_root = os.getenv("VCPKG_ROOT")
 if vcpkg_root then
@@ -50,4 +55,9 @@ target("phoenix_mcp")
 	add_packages("vcpkg::zlib", {public = true})
 	add_packages("vcpkg::libuuid", {public = true})
 	add_packages("vcpkg::c-ares", {public = true})
-	add_packages("opentelemetry-cpp", {public = true})
+    if with_otel then
+        add_packages("opentelemetry-cpp", {public = true})
+        add_defines("PXM_WITH_OTEL=1", {public = true})
+    else
+        add_defines("PXM_WITH_OTEL=0", {public = true})
+    end

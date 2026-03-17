@@ -5,21 +5,26 @@
 #include "mcp_request_handler.h"
 
 #include <folly/coro/BlockingWait.h>
+#if PXM_WITH_OTEL
 #include <opentelemetry/context/propagation/global_propagator.h>
 #include <opentelemetry/context/runtime_context.h>
 #include <opentelemetry/nostd/string_view.h>
 #include <opentelemetry/trace/context.h>
 #include <opentelemetry/trace/propagation/http_trace_context.h>
+#endif
 #include <spdlog/spdlog.h>
 
+#if PXM_WITH_OTEL
 #include <array>
 #include <cctype>
+#endif
 #include <utility>
 #include <vector>
 
 namespace pxm::server {
   namespace {
 
+#if PXM_WITH_OTEL
   class HeaderCarrier final : public opentelemetry::context::propagation::TextMapCarrier {
   public:
     explicit HeaderCarrier(const std::unordered_map<std::string, std::string>& headers)
@@ -85,6 +90,7 @@ namespace pxm::server {
     span_context.trace_id().ToLowerBase16(buffer);
     return std::string(buffer.data(), buffer.size());
   }
+#endif
 
   } // namespace
 
@@ -118,6 +124,7 @@ namespace pxm::server {
 
   folly::coro::Task<std::optional<std::string>>
   McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
+#if PXM_WITH_OTEL
     const auto traceparent_it = request.headers.find("traceparent");
     const auto tracestate_it = request.headers.find("tracestate");
     const auto extracted_context = extract_context(request.headers);
@@ -129,6 +136,7 @@ namespace pxm::server {
         tracestate_it != request.headers.end() ? tracestate_it->second : "",
         trace_id_to_string(extracted_span));
     auto context_guard = opentelemetry::context::RuntimeContext::Attach(extracted_context);
+#endif
     const auto result = co_await session_->handle_input_async(
         std::move(request.body));
     if (!result.has_value()) {
