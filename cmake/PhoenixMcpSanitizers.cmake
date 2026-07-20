@@ -1,0 +1,18 @@
+include_guard(GLOBAL)
+
+function(phoenix_mcp_enable_sanitizers target)
+  if(NOT PHOENIX_MCP_ENABLE_SANITIZERS)
+    return()
+  endif()
+
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /fsanitize=address)
+    target_link_options(${target} PRIVATE /fsanitize=address)
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(${target} PRIVATE -fsanitize=address,undefined
+                           -fno-omit-frame-pointer)
+    target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+  else()
+    message(WARNING "Sanitizers are not configured for ${CMAKE_CXX_COMPILER_ID}")
+  endif()
+endfunction()
