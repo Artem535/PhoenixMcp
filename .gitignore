@@ -1,4 +1,5 @@
 # Build directories
+.worktrees/
 build/
 build.*/
 .xmake/
