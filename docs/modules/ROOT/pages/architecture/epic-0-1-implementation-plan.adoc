@@ -80,7 +80,7 @@ matrix.
 - [ ] Run `rtk git diff --check` and inspect all changed documentation.
 - [ ] Commit with `docs: define build and code style rules`.
 
-=== Task 2: Introduce the target source layout and namespace compatibility
+=== Task 3: Introduce the target source layout and namespace compatibility
 
 *Files:*
 
@@ -90,7 +90,8 @@ matrix.
 * Create `include/phoenix_mcp/compat/pxm.h` for the deprecated namespace shim.
 * Test `tests/phoenix_mcp/server/public_headers_test.cc`.
 
-*Consumes:* Task 1 naming and compatibility policy.
+*Consumes:* Task 1 naming and compatibility policy and Task 2 CMake test
+infrastructure.
 *Produces:* self-contained public headers in `namespace phoenix_mcp` and an
 explicit, temporary `pxm` compatibility include.
 
@@ -108,7 +109,7 @@ explicit, temporary `pxm` compatibility include.
   and Xmake.
 - [ ] Commit with `refactor: establish public SDK header layout`.
 
-=== Task 3: Create the authoritative CMake foundation
+=== Task 2: Create the authoritative CMake foundation
 
 *Files:*
 
@@ -118,7 +119,8 @@ explicit, temporary `pxm` compatibility include.
 * Create `cmake/PhoenixMcpSanitizers.cmake`.
 * Create `VERSION`.
 
-*Consumes:* Task 2 source layout.
+*Consumes:* Task 1 repository and build-system rules plus the existing source
+layout. Public-header migration follows in Task 3.
 *Produces:* component targets, feature options, C++20 enforcement, warnings,
 sanitizer controls, CTest enablement, and CPack configuration.
 
@@ -149,7 +151,7 @@ sanitizer controls, CTest enablement, and CPack configuration.
 * Modify `CMakeLists.txt`.
 * Create `tests/phoenix_mcp/integration/package_consumer/CMakeLists.txt`.
 
-*Consumes:* Task 3 targets and options.
+*Consumes:* Task 2 targets and options.
 *Produces:* manifest dependency resolution, all requested presets, installation,
 exported targets, and downstream package verification.
 
@@ -180,7 +182,8 @@ exported targets, and downstream package verification.
 * Modify `src/phoenix_mcp/xmake.lua`.
 * Modify example target declarations.
 
-*Consumes:* CMake target names, sources, and feature decisions from Tasks 3–4.
+*Consumes:* CMake target names, sources, and feature decisions from Tasks 2 and
+4.
 *Produces:* supported Xmake targets `phoenix_mcp_core`,
 `phoenix_mcp_protocol`, `phoenix_mcp_server`, `phoenix_mcp_client`, and
 `phoenix_mcp_transport_stdio`, plus examples and unit tests.
@@ -205,7 +208,7 @@ exported targets, and downstream package verification.
 * Modify root `CMakeLists.txt`.
 * Modify `vcpkg.json`.
 
-*Consumes:* Task 3 testing hooks and Task 4 test dependency feature.
+*Consumes:* Task 2 testing hooks and Task 4 test dependency feature.
 *Produces:* CTest-discoverable GoogleTest targets and initial protocol/error
 coverage.
 
@@ -227,7 +230,7 @@ coverage.
 * Modify `README.adoc` and `README_RU.adoc`.
 * Modify `docs/modules/ROOT/pages/architecture/build-systems.adoc`.
 
-*Consumes:* presets and support matrix from Tasks 4–6.
+*Consumes:* presets and support matrix from Tasks 2 and 4–6.
 *Produces:* CMake-first CI matrix, Xmake Linux smoke jobs, and current build
 instructions in English and Russian.
 
@@ -244,7 +247,8 @@ instructions in English and Russian.
 
 == Plan self-review
 
-*Coverage:* Tasks 1–2 implement Epic 0 repository/API rules; Tasks 3–7 cover
+*Coverage:* Tasks 1 and 3 implement Epic 0 repository/API rules; Tasks 2 and
+4–7 cover
 the authoritative CMake build, manifest dependencies, presets, install/export,
 CTest, Xmake parity, CI, and documentation required by Epic 1.
 
