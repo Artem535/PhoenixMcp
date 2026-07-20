@@ -209,6 +209,16 @@ Recording payloads requires an explicit opt-in.
 
 Installed public headers live exclusively under `include/phoenix_mcp/`.
 Implementation details and generated protocol wire types are not installed.
+Public declarations use `namespace phoenix_mcp`. During the migration, the
+explicit compatibility header provides `pxm` as a deprecated transition alias;
+new public declarations must not use `pxm`. Private headers remain under
+`src/phoenix_mcp/`, next to the implementation that uses them, and are never
+installed.
+
+The project coding and build rules are defined in
+xref:architecture/code-style.adoc[Code style] and
+xref:architecture/build-systems.adoc[Build systems].
+
 The exported CMake targets are:
 
 ----
@@ -225,12 +235,11 @@ PhoenixMcp::Telemetry
 PhoenixMcp::Testing
 ----
 
-The `pxm` namespace remains canonical. CMake target names and header paths use
-the PhoenixMcp brand. When a concrete class or method must be replaced, that
-symbol—not the whole namespace—is deprecated for at least one minor release and
-the migration guide names its replacement. Until 1.0, protocol compatibility
-does not imply binary compatibility; after 1.0, public API changes follow
-Semantic Versioning.
+CMake target names and header paths use the PhoenixMcp brand. When a concrete
+class or method must be replaced, that symbol—not the whole namespace—is
+deprecated for at least one minor release and the migration guide names its
+replacement. Until 1.0, protocol compatibility does not imply binary
+compatibility; after 1.0, public API changes follow Semantic Versioning.
 
 == Verification architecture
 

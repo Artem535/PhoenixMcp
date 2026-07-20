@@ -1,0 +1,51 @@
+= Build systems
+:description: CMake and Xmake responsibilities for PhoenixMcp.
+
+CMake is the handwritten, authoritative build system for PhoenixMcp. It requires
+CMake 3.28 or later, C++20, Ninja presets, vcpkg manifest mode, CTest, and CPack.
+Xmake is a supported secondary workflow that mirrors the supported build targets.
+Never generate `CMakeLists.txt` from Xmake.
+
+== Responsibility matrix
+
+[cols="2,1,1",options="header"]
+|===
+|Capability |CMake |Xmake
+
+|Target topology and dependency resolution
+|Authoritative
+|Mirrors supported targets
+
+|C++20 configuration and Ninja presets
+|Supported and authoritative
+|Supported for its own workflow
+
+|vcpkg manifest dependencies
+|Supported and authoritative
+|May consume the same dependencies
+
+|CTest test registration and execution
+|Supported and authoritative
+|May provide a secondary test workflow
+
+|Install rules and exported CMake package
+|Supported and authoritative
+|Not provided
+
+|CPack packages
+|Supported and authoritative
+|Not provided
+
+|CI build and package validation
+|Authoritative
+|Linux smoke coverage
+|===
+
+Xmake does not provide install rules, exported CMake packages, or CPack. Those
+release and consumption guarantees belong solely to CMake.
+
+== Command rule
+
+Run every repository command through `rtk`, including CMake, CTest, Xmake,
+formatters, linters, scripts, and Git commands. CMake is the primary workflow;
+Xmake remains useful for supported secondary builds and smoke coverage.

@@ -1,0 +1,85 @@
+= Code style
+:description: Canonical source, namespace, header, and naming rules for PhoenixMcp.
+
+PhoenixMcp uses C++20, `namespace phoenix_mcp`, and Google C++ style as the
+starting point for local conventions. New public API declarations must use
+`phoenix_mcp`. The `pxm` namespace is a deprecated transition alias available
+only through the explicit compatibility header; it is not a namespace for new
+code.
+
+== Files and headers
+
+Use lowercase `snake_case` filenames. Declarations live in `.h` files and C++
+implementations live in `.cc` files. A unit test for a component has the
+`_test.cc` suffix:
+
+----
+client_session.h
+client_session.cc
+client_session_test.cc
+----
+
+Installed public headers live only below `include/phoenix_mcp/`. Private headers
+stay beside the corresponding implementation below `src/phoenix_mcp/` and are
+never installed. A header guard is derived from the repository-relative path,
+is uppercase, and replaces punctuation with underscores. For example,
+`include/phoenix_mcp/server/client_session.h` uses:
+
+[source,cpp]
+----
+#ifndef PHOENIX_MCP_SERVER_CLIENT_SESSION_H_
+#define PHOENIX_MCP_SERVER_CLIENT_SESSION_H_
+
+namespace phoenix_mcp {
+// Declarations.
+}
+
+#endif  // PHOENIX_MCP_SERVER_CLIENT_SESSION_H_
+----
+
+== Include order
+
+Follow Google include order. A `.cc` file first includes its matching header,
+then C system headers, C++ standard-library headers, third-party headers, and
+project headers. Keep each group alphabetized and separate groups with one
+blank line.
+
+[source,cpp]
+----
+#include "phoenix_mcp/server/client_session.h"
+
+#include <sys/types.h>
+
+#include <memory>
+#include <string>
+
+#include <folly/Expected.h>
+
+#include "phoenix_mcp/protocol/message.h"
+----
+
+== Naming
+
+[cols="1,1,2",options="header"]
+|===
+|Element |Convention |Example
+
+|Classes, structs, enums, aliases
+|`PascalCase`
+|`ClientSession`
+
+|Functions, variables, parameters, files
+|`snake_case`
+|`send_request`, `client_session.cc`
+
+|Non-static data members
+|`snake_case_`
+|`pending_requests_`
+
+|Constants
+|`kPascalCase`
+|`kDefaultTimeout`
+|===
+
+Use two-space indentation and keep lines at or below 80 columns where practical.
+Format changed C++ files and run available static analysis through `rtk`.
