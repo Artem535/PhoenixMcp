@@ -15,6 +15,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(PhoenixMcpOptions)
+include(PhoenixMcpDependencies)
 include(PhoenixMcpWarnings)
 include(PhoenixMcpSanitizers)
 
@@ -22,26 +23,6 @@ set(BUILD_TESTING ${PHOENIX_MCP_BUILD_TESTS} CACHE BOOL
     "Build the CTest test suite" FORCE)
 include(CTest)
 include(CPack)
-
-find_package(reflectcpp CONFIG REQUIRED)
-find_package(folly CONFIG REQUIRED)
-find_package(spdlog CONFIG REQUIRED)
-
-if(PHOENIX_MCP_ENABLE_DROGON)
-  find_package(Drogon CONFIG REQUIRED)
-endif()
-
-if(PHOENIX_MCP_ENABLE_CROW)
-  find_package(Crow CONFIG REQUIRED)
-endif()
-
-if(PHOENIX_MCP_ENABLE_HTTP_CLIENT)
-  find_package(OpenSSL REQUIRED)
-endif()
-
-if(PHOENIX_MCP_ENABLE_OTEL)
-  find_package(opentelemetry-cpp CONFIG REQUIRED)
-endif()
 
 if(PHOENIX_MCP_ENABLE_CLANG_TIDY)
   find_program(PHOENIX_MCP_CLANG_TIDY NAMES clang-tidy REQUIRED)
@@ -80,19 +61,21 @@ target_compile_definitions(phoenix_mcp_implementation
   PRIVATE GLOG_USE_GLOG_EXPORT
   PUBLIC PXM_WITH_OTEL=$<BOOL:${PHOENIX_MCP_ENABLE_OTEL}>)
 target_link_libraries(phoenix_mcp_implementation
-  PUBLIC rfl::rfl folly::folly spdlog::spdlog)
+  PUBLIC ${PHOENIX_MCP_CORE_DEPENDENCIES})
 
 if(PHOENIX_MCP_ENABLE_DROGON)
-  target_link_libraries(phoenix_mcp_implementation PRIVATE Drogon::Drogon)
+  target_link_libraries(phoenix_mcp_implementation
+                        PRIVATE ${PHOENIX_MCP_DROGON_DEPENDENCIES})
 endif()
 
 if(PHOENIX_MCP_ENABLE_CROW)
-  target_link_libraries(phoenix_mcp_implementation PRIVATE Crow::Crow)
+  target_link_libraries(phoenix_mcp_implementation
+                        PRIVATE ${PHOENIX_MCP_CROW_DEPENDENCIES})
 endif()
 
 if(PHOENIX_MCP_ENABLE_OTEL)
   target_link_libraries(phoenix_mcp_implementation
-                        PRIVATE opentelemetry-cpp::api)
+                        PRIVATE ${PHOENIX_MCP_OTEL_DEPENDENCIES})
 endif()
 
 phoenix_mcp_enable_warnings(phoenix_mcp_implementation)

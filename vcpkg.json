@@ -1,0 +1,43 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "phoenix-mcp",
+  "version-string": "0.2.0",
+  "description": "C++20 SDK for Model Context Protocol servers and clients.",
+  "dependencies": [
+    "reflectcpp",
+    "folly",
+    "spdlog"
+  ],
+  "features": {
+    "http-client": {
+      "description": "Enable HTTP client dependencies.",
+      "dependencies": [
+        "openssl"
+      ]
+    },
+    "drogon": {
+      "description": "Enable the Drogon HTTP transport adapter.",
+      "dependencies": [
+        "drogon"
+      ]
+    },
+    "crow": {
+      "description": "Enable the Crow HTTP transport adapter.",
+      "dependencies": [
+        "crow"
+      ]
+    },
+    "otel": {
+      "description": "Enable OpenTelemetry integration.",
+      "dependencies": [
+        "opentelemetry-cpp"
+      ]
+    },
+    "tests": {
+      "description": "Enable test-only dependencies.",
+      "dependencies": [
+        "catch2"
+      ]
+    }
+  }
+}

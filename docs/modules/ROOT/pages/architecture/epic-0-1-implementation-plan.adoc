@@ -114,7 +114,9 @@ explicit, temporary `pxm` compatibility include.
 *Files:*
 
 * Replace `CMakeLists.txt`.
+* Create `vcpkg.json`.
 * Create `cmake/PhoenixMcpOptions.cmake`.
+* Create `cmake/PhoenixMcpDependencies.cmake`.
 * Create `cmake/PhoenixMcpWarnings.cmake`.
 * Create `cmake/PhoenixMcpSanitizers.cmake`.
 * Create `VERSION`.
@@ -146,24 +148,19 @@ sanitizer controls, CTest enablement, and CPack configuration.
 
 * Create `vcpkg.json`.
 * Create `CMakePresets.json`.
-* Create `cmake/PhoenixMcpDependencies.cmake`.
 * Create `cmake/PhoenixMcpConfig.cmake.in`.
 * Modify `CMakeLists.txt`.
 * Create `tests/phoenix_mcp/integration/package_consumer/CMakeLists.txt`.
 
 *Consumes:* Task 2 targets and options.
-*Produces:* manifest dependency resolution, all requested presets, installation,
-exported targets, and downstream package verification.
+*Produces:* all requested presets, installation, exported targets, and
+downstream package verification.
 
 - [ ] Add a package-consumer CMake project that calls
   `find_package(PhoenixMcp CONFIG REQUIRED)` and links
   `PhoenixMcp::Server` plus `PhoenixMcp::TransportStdio`.
-- [ ] Add vcpkg manifest dependencies for the current Core requirements;
-  declare optional features for Drogon, Crow, OpenTelemetry, and test-only
-  dependencies rather than making them unconditional.
-- [ ] Use `find_package(... CONFIG REQUIRED)` only after a feature gate selects
-  the dependency. Export dependency discovery via `find_dependency` in the
-  package config file.
+- [ ] Export dependency discovery via `find_dependency` in the package config
+  file, matching the feature gates established by Task 2.
 - [ ] Add `linux-debug`, `linux-release`, `linux-minimal`,
   `linux-all-features`, `linux-asan`, `linux-tsan`, `linux-ubsan`,
   `clang-debug`, `gcc-debug`, `windows-msvc`, and `macos-clang` configure,

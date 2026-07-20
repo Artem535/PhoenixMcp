@@ -45,10 +45,13 @@ guard rules.
 
 Use concise, imperative commit subjects matching the existing history, e.g.
 `Add Crow HTTP adapter` or `Fix session shutdown`. Keep each commit focused.
-PRs should explain the protocol or lifecycle impact, list commands run, link
-the issue when applicable, and include an example payload or log excerpt for
-transport-facing changes. Do not commit credentials, tokens, generated build
-directories, or local vcpkg paths.
+Before starting work, create an issue, apply `in-progress`, and work on a
+dedicated branch. Post progress notes on the issue as milestones are completed.
+After verification, commit the branch and open a pull request linked to the
+issue (GitHub's PR is this repository's merge-request equivalent). PRs explain
+protocol or lifecycle impact, list commands run, and include payload/log
+evidence for transport changes. Do not commit credentials, tokens, generated
+build directories, or local vcpkg paths.
 
 ## Architecture Notes
 

@@ -13,6 +13,14 @@ if(NOT phoenix_mcp_root MATCHES "Hand-maintained, authoritative CMake build")
   message(FATAL_ERROR "The root CMake build must declare its manual authority")
 endif()
 
+if(NOT phoenix_mcp_root MATCHES "include\\(PhoenixMcpDependencies\\)")
+  message(FATAL_ERROR "The root CMake build must use the dependency module")
+endif()
+
+if(NOT EXISTS "${PHOENIX_MCP_SOURCE_DIR}/vcpkg.json")
+  message(FATAL_ERROR "The root CMake build must provide a vcpkg manifest")
+endif()
+
 string(STRIP "${phoenix_mcp_version}" phoenix_mcp_version)
 if(NOT phoenix_mcp_version STREQUAL "0.2.0")
   message(FATAL_ERROR "VERSION must contain the foundation version 0.2.0")
