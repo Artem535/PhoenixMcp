@@ -1,0 +1,13 @@
+#include "phoenix_mcp/compat/pxm.h"
+#include "phoenix_mcp/core/runtime.h"
+#include "phoenix_mcp/protocol/message_types.h"
+#include "phoenix_mcp/server/mcp_request_handler.h"
+#include "phoenix_mcp/server/mcp_server.h"
+#include "phoenix_mcp/server/server.h"
+#include "phoenix_mcp/tool_registry/tool_registry.h"
+#include "phoenix_mcp/tool_registry/utils.h"
+#include "phoenix_mcp/transport/abstract_transport.h"
+#include "phoenix_mcp/transport/i_transport.h"
+#include "phoenix_mcp/transport/stdio_transport.h"
+
+int main() { return 0; }

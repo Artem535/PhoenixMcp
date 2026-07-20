@@ -8,7 +8,7 @@
 
 #include <utility>
 
-namespace pxm::server {
+namespace phoenix_mcp::server {
 
 // clang-format off
 McpSession::McpSession(
@@ -23,13 +23,13 @@ McpSession::McpSession(
 }
 // clang-format on
 
-std::optional<rfl::Generic>
-McpSession::handle_input(const std::string& request) {
+std::optional<rfl::Generic> McpSession::handle_input(
+    const std::string& request) {
   return folly::coro::blockingWait(handle_input_async(request));
 }
 
-folly::coro::Task<std::optional<rfl::Generic>>
-McpSession::handle_input_async(std::string request) {
+folly::coro::Task<std::optional<rfl::Generic>> McpSession::handle_input_async(
+    std::string request) {
   if (const auto req = try_serialize_request(request); req.has_value())
     co_return co_await handle_request_async(*req);
 
@@ -44,8 +44,8 @@ rfl::Generic McpSession::handle_request(const msg::types::Request& request) {
   return folly::coro::blockingWait(handle_request_async(request));
 }
 
-folly::coro::Task<rfl::Generic>
-McpSession::handle_request_async(const msg::types::Request& request) {
+folly::coro::Task<rfl::Generic> McpSession::handle_request_async(
+    const msg::types::Request& request) {
   Stage current_stage;
   {
     std::lock_guard lock(state_mutex_);
@@ -85,7 +85,6 @@ bool McpSession::has_init_timeout() const {
 
 std::optional<msg::types::Request> McpSession::try_serialize_request(
     const std::string& request) {
-
   std::optional<msg::types::Request> request_ = std::nullopt;
   try {
     request_ = rfl::json::read<msg::types::Request>(request).value();
@@ -111,18 +110,13 @@ rfl::Generic McpSession::try_initialize(const msg::types::Request& request) {
 
 rfl::Generic McpSession::make_initialize_response(
     const msg::types::RequestId& id) const {
-
   const msg::types::InitializeResult result{
       .protocol_version = constants::kMcpVersion,
       .capabilities = server_capabilities_,
       .server_info = server_info_,
-      .instruction = instruction_
-  };
+      .instruction = instruction_};
 
-  const msg::types::InitializeResultRPC resp{
-      .id = id,
-      .result = result
-  };
+  const msg::types::InitializeResultRPC resp{.id = id, .result = result};
 
   return rfl::to_generic(resp);
 }
@@ -130,12 +124,8 @@ rfl::Generic McpSession::make_initialize_response(
 template <typename T>
 rfl::Generic McpSession::make_response(const T& result,
                                        const msg::types::RequestId& id) const {
-
   const msg::types::Response resp{
-      .jsonrpc = "2.0",
-      .result = rfl::to_generic(result),
-      .id = id
-  };
+      .jsonrpc = "2.0", .result = rfl::to_generic(result), .id = id};
 
   return rfl::to_generic(resp);
 }
@@ -144,8 +134,8 @@ rfl::Generic McpSession::handle_operation(const msg::types::Request& request) {
   return folly::coro::blockingWait(handle_operation_async(request));
 }
 
-folly::coro::Task<rfl::Generic>
-McpSession::handle_operation_async(const msg::types::Request& request) {
+folly::coro::Task<rfl::Generic> McpSession::handle_operation_async(
+    const msg::types::Request& request) {
   if (request.method == msg_t::constants::initialize_request) {
     spdlog::info("McpSession| Repeated initialize request received.");
     co_return make_initialize_response(request.id);
@@ -175,25 +165,19 @@ rfl::Generic McpSession::create_error(const std::string& msg,
                                       const msg::types::RequestId& id,
                                       const int code) {
   const msg::types::Error error{
-      .id = id,
-      .error = msg::types::ErrorData{
-          .code = code,
-          .message = msg
-      }
-  };
+      .id = id, .error = msg::types::ErrorData{.code = code, .message = msg}};
 
   return rfl::to_generic(error);
 }
 
-std::optional<msg::types::Notification>
-McpSession::try_serialize_notification(const std::string& json) {
+std::optional<msg::types::Notification> McpSession::try_serialize_notification(
+    const std::string& json) {
   try {
     return rfl::json::read<msg::types::Notification>(json).value();
   } catch (...) {
     return std::nullopt;
   }
 }
-
 
 // TODO: You must be void?
 std::optional<rfl::Generic> McpSession::handle_notification(
@@ -223,15 +207,15 @@ rfl::Generic McpSession::call_tool(const msg::types::Request& request) const {
       const_cast<McpSession*>(this)->call_tool_async(request));
 }
 
-folly::coro::Task<rfl::Generic>
-McpSession::call_tool_async(const msg::types::Request& request) {
+folly::coro::Task<rfl::Generic> McpSession::call_tool_async(
+    const msg::types::Request& request) {
   spdlog::debug("McpSession::call_tool| Call tool {}",
                 rfl::json::write(request));
 
   // Convert to tool request;
   const auto generic = rfl::to_generic(request);
-  const auto [flatten, opt_params] = rfl::from_generic<
-    msg_t::CallToolRequest>(generic).value();
+  const auto [flatten, opt_params] =
+      rfl::from_generic<msg_t::CallToolRequest>(generic).value();
 
   if (!opt_params.has_value()) {
     co_return create_error("Invalid request", request.id);
@@ -239,16 +223,14 @@ McpSession::call_tool_async(const msg::types::Request& request) {
 
   const auto [name, arguments] = opt_params.value();
 
-  spdlog::debug("McpSession::handle_operation| Call tool, name: {}",
-                name);
-  spdlog::debug(
-      "McpSession::handle_operation| Call tool, args: {}",
-      rfl::json::write(arguments));
+  spdlog::debug("McpSession::handle_operation| Call tool, name: {}", name);
+  spdlog::debug("McpSession::handle_operation| Call tool, args: {}",
+                rfl::json::write(arguments));
 
-  const auto result = co_await tool_registry_->call_tool_async(
-      name, arguments.value());
+  const auto result =
+      co_await tool_registry_->call_tool_async(name, arguments.value());
 
   co_return make_response(result, request.id);
 }
 
-}
+}  // namespace phoenix_mcp::server

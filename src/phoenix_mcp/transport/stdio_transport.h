@@ -1,13 +1,6 @@
-//
-// Created by artem.d on 09.11.2025.
-//
-#pragma once
+#ifndef PHOENIX_MCP_PRIVATE_TRANSPORT_STDIO_TRANSPORT_H_
+#define PHOENIX_MCP_PRIVATE_TRANSPORT_STDIO_TRANSPORT_H_
 
-#include "i_transport.h"
+#include "phoenix_mcp/transport/stdio_transport.h"
 
-namespace pxm::server {
-class StdioTransport final : public ITransport {
-public:
-  int run(Handler on_message) override;
-};
-} // namespace pxm::server
+#endif  // PHOENIX_MCP_PRIVATE_TRANSPORT_STDIO_TRANSPORT_H_

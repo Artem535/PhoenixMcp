@@ -1,9 +1,9 @@
 #include <rfl/Generic.hpp>
 #include <rfl/json.hpp>
 
-#include "phoenix_mcp/tool_registry/utils.hpp"
-#include "phoenix_mcp/types/msg_types.hpp"
+#include "phoenix_mcp/protocol/message_types.h"
 #include "phoenix_mcp/tool_registry/tool_registry.h"
+#include "phoenix_mcp/tool_registry/utils.h"
 #include "spdlog/spdlog.h"
 
 struct Test {
@@ -14,13 +14,13 @@ struct Test {
 int main(int argc, char** argv) {
   spdlog::set_level(spdlog::level::debug);
   // Create tool registry.
-  pxm::tool::ToolRegistry registry;
+  phoenix_mcp::tool::ToolRegistry registry;
   // Register function.
   registry.register_tool<Test>("test", "", [](const Test& test) {
     rfl::Generic::Object obj;
     obj["a"] = test.a + 1;
     obj["b"] = test.b + 2;
-    return pxm::utils::make_text_result(rfl::json::write(obj));
+    return phoenix_mcp::utils::make_text_result(rfl::json::write(obj));
   });
 
   // Create object with params to function.

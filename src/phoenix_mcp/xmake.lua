@@ -36,7 +36,7 @@ end
 target("phoenix_mcp")
 	set_kind("static")
 	add_files("*/*.cpp", {public=true})
-	add_includedirs(".", {public = true})
+	add_includedirs(".", "../../include", {public = true})
 	add_packages("vcpkg::reflectcpp", {public = true})
 	add_packages("vcpkg::yyjson", {public = true})
 	add_packages("vcpkg::spdlog", {public = true})

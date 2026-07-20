@@ -5,20 +5,18 @@
 #pragma once
 
 #include <folly/coro/Task.h>
+#include <spdlog/spdlog.h>
 
 #include <chrono>
 #include <mutex>
-
 #include <rfl/Generic.hpp>
 #include <rfl/json.hpp>
-#include <spdlog/spdlog.h>
 
-#include "../types/msg_types.hpp"
 #include "../constants/constants.hpp"
 #include "../tool_registry/tool_registry.h"
+#include "../types/msg_types.hpp"
 
-
-namespace pxm::server {
+namespace phoenix_mcp::server {
 
 namespace ch = std::chrono;
 namespace cnt_error = constants::msg_error;
@@ -30,15 +28,14 @@ using optional_notification = std::optional<msg::types::Notification>;
 /// Handles requests and notifications, manages server state
 /// and coordinates tool registry operations
 class McpSession {
-public:
+ public:
   /// @brief Constructor for server session
   /// @param server_capabilities Server capabilities (tools, resources, etc.)
   /// @param server_info Implementation info (name, version)
   /// @param instruction Server instruction
   /// @param tool_registry Unique pointer to tool registry
   McpSession(msg::types::ServerCapabilities server_capabilities,
-             msg::types::Implementation server_info,
-             std::string instruction,
+             msg::types::Implementation server_info, std::string instruction,
              std::unique_ptr<tool::ToolRegistry> tool_registry);
 
   /// @brief Handle JSON request as string
@@ -55,13 +52,13 @@ public:
   folly::coro::Task<rfl::Generic> handle_request_async(
       const msg::types::Request& request);
 
-private:
+ private:
   /// @brief Server lifecycle stages
   enum class Stage {
-    Uninitialized, ///< Server not initialized yet
-    Initialized, ///< Server successfully initialized
-    Operation, ///< Server in normal operation mode
-    Shutdown ///< Server shutting down
+    Uninitialized,  ///< Server not initialized yet
+    Initialized,    ///< Server successfully initialized
+    Operation,      ///< Server in normal operation mode
+    Shutdown        ///< Server shutting down
   };
 
   ///< Initialization timeout (5 seconds)
@@ -97,7 +94,7 @@ private:
 
   template <class T>
   rfl::Generic make_response(const T& result,
-                            const msg::types::RequestId& id) const;
+                             const msg::types::RequestId& id) const;
 
   /// @brief Handle operational requests (tools, resources, etc.)
   /// @param request Request to handle
@@ -127,11 +124,10 @@ private:
   std::optional<rfl::Generic> handle_notification(
       const msg::types::Notification& notif);
 
-
   rfl::Generic call_tool(const msg::types::Request& request) const;
   folly::coro::Task<rfl::Generic> call_tool_async(
       const msg::types::Request& request);
 
   mutable std::mutex state_mutex_;
 };
-}
+}  // namespace phoenix_mcp::server

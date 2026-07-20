@@ -56,7 +56,8 @@ endif()
 add_library(phoenix_mcp_implementation ${PHOENIX_MCP_LIBRARY_TYPE}
             ${phoenix_mcp_sources})
 target_include_directories(phoenix_mcp_implementation
-  PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>")
+  PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_definitions(phoenix_mcp_implementation
   PRIVATE GLOG_USE_GLOG_EXPORT
   PUBLIC PXM_WITH_OTEL=$<BOOL:${PHOENIX_MCP_ENABLE_OTEL}>)
@@ -86,8 +87,6 @@ function(phoenix_mcp_add_module name)
   add_library(PhoenixMcp::${name} ALIAS phoenix_mcp_${name})
 endfunction()
 
-# The current server implementation is private.  These interfaces preserve the
-# documented acyclic public module graph while the source tree is migrated.
 phoenix_mcp_add_module(Core)
 target_link_libraries(phoenix_mcp_Core INTERFACE phoenix_mcp_implementation)
 
@@ -139,6 +138,15 @@ if(PHOENIX_MCP_BUILD_EXAMPLES)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(phoenix_mcp_public_headers_test
+    tests/phoenix_mcp/server/public_headers_test.cc)
+  target_link_libraries(phoenix_mcp_public_headers_test
+    PRIVATE PhoenixMcp::Server PhoenixMcp::TransportStdio)
+
+  add_test(
+    NAME phoenix_mcp_public_headers
+    COMMAND phoenix_mcp_public_headers_test)
+
   add_test(
     NAME phoenix_mcp_manual_authority
     COMMAND ${CMAKE_COMMAND}
