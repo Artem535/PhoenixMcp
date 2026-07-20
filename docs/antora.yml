@@ -1,0 +1,5 @@
+name: phoenix-mcp
+title: PhoenixMcp SDK
+version: '~'
+nav:
+  - modules/ROOT/nav.adoc

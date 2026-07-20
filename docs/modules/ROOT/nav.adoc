@@ -1,0 +1,3 @@
+* xref:index.adoc[Overview]
+* Architecture
+** xref:architecture/index.adoc[SDK architecture]
