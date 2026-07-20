@@ -44,6 +44,21 @@ Never generate `CMakeLists.txt` from Xmake.
 Xmake does not provide install rules, exported CMake packages, or CPack. Those
 release and consumption guarantees belong solely to CMake.
 
+== CMake presets
+
+The CMake presets expect a vcpkg checkout supplied through `VCPKG_ROOT`. Before
+configuring, point it at the repository-maintained checkout (or your own):
+
+[source,console]
+----
+export VCPKG_ROOT=/home/a.durynin/Soft/vcpkg
+rtk cmake --preset linux-debug
+----
+
+`CMAKE_TOOLCHAIN_FILE` uses `$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake`.
+The vcpkg root is intentionally not combined with `${sourceDir}`: both expand to
+absolute paths, so that combination would not form a valid toolchain path.
+
 == Command rule
 
 Run every repository command through `rtk`, including CMake, CTest, Xmake,

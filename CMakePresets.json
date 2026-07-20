@@ -1,0 +1,202 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_MODE": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-minimal",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "PHOENIX_MCP_ENABLE_HTTP_CLIENT": "OFF",
+        "PHOENIX_MCP_ENABLE_DROGON": "OFF",
+        "PHOENIX_MCP_ENABLE_CROW": "OFF",
+        "PHOENIX_MCP_ENABLE_OTEL": "OFF",
+        "VCPKG_MANIFEST_FEATURES": ""
+      }
+    },
+    {
+      "name": "linux-all-features",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "PHOENIX_MCP_ENABLE_HTTP_CLIENT": "ON",
+        "PHOENIX_MCP_ENABLE_DROGON": "ON",
+        "PHOENIX_MCP_ENABLE_CROW": "ON",
+        "PHOENIX_MCP_ENABLE_OTEL": "ON",
+        "VCPKG_MANIFEST_FEATURES": "http-client;drogon;crow;otel;tests"
+      }
+    },
+    {
+      "name": "linux-asan",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "PHOENIX_MCP_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "linux-tsan",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "PHOENIX_MCP_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "linux-ubsan",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "PHOENIX_MCP_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "clang-debug",
+      "inherits": "linux-debug",
+      "environment": {
+        "CC": "clang",
+        "CXX": "clang++"
+      }
+    },
+    {
+      "name": "gcc-debug",
+      "inherits": "linux-debug",
+      "environment": {
+        "CC": "gcc",
+        "CXX": "g++"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    },
+    {
+      "name": "macos-clang",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_TARGET_TRIPLET": "x64-osx"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
+    {
+      "name": "linux-minimal",
+      "configurePreset": "linux-minimal"
+    },
+    {
+      "name": "linux-all-features",
+      "configurePreset": "linux-all-features"
+    },
+    {
+      "name": "linux-asan",
+      "configurePreset": "linux-asan"
+    },
+    {
+      "name": "linux-tsan",
+      "configurePreset": "linux-tsan"
+    },
+    {
+      "name": "linux-ubsan",
+      "configurePreset": "linux-ubsan"
+    },
+    {
+      "name": "clang-debug",
+      "configurePreset": "clang-debug"
+    },
+    {
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug"
+    },
+    {
+      "name": "windows-msvc",
+      "configurePreset": "windows-msvc"
+    },
+    {
+      "name": "macos-clang",
+      "configurePreset": "macos-clang"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
+    {
+      "name": "linux-minimal",
+      "configurePreset": "linux-minimal"
+    },
+    {
+      "name": "linux-all-features",
+      "configurePreset": "linux-all-features"
+    },
+    {
+      "name": "linux-asan",
+      "configurePreset": "linux-asan"
+    },
+    {
+      "name": "linux-tsan",
+      "configurePreset": "linux-tsan"
+    },
+    {
+      "name": "linux-ubsan",
+      "configurePreset": "linux-ubsan"
+    },
+    {
+      "name": "clang-debug",
+      "configurePreset": "clang-debug"
+    },
+    {
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug"
+    },
+    {
+      "name": "windows-msvc",
+      "configurePreset": "windows-msvc"
+    },
+    {
+      "name": "macos-clang",
+      "configurePreset": "macos-clang"
+    }
+  ]
+}
