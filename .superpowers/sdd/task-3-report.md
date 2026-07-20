@@ -41,3 +41,22 @@
 The minimal build emits existing warning-class diagnostics for partial
 aggregate initialization and a pessimizing move in the legacy server/tool
 implementation. They do not fail the configured warning policy.
+
+## Follow-up: all-features HTTP example
+
+The HTTP example still included the private `utils.hpp` and private Drogon
+adapter header and used `pxm`. The optional Crow and Drogon adapter declarations
+also still used `pxm`, which was incompatible with the migrated public
+`ITransport` declaration. The follow-up publishes framework-neutral public
+adapter headers, turns their source headers into private forwarders, migrates
+the adapter implementations and HTTP example to `phoenix_mcp`, and adds both
+adapter headers to the public-header compilation check.
+
+- `rtk cmake --build --preset linux-minimal` and
+  `rtk ctest --preset linux-minimal --output-on-failure` — passed: 2/2 tests.
+- `rtk rg -n "pxm::|\\.hpp|src/phoenix_mcp" examples/create_server_http ...`
+  found no private-header or `pxm` usage in the HTTP example; the only match
+  was the third-party `rfl/Generic.hpp` include.
+- `linux-all-features` configure/build was attempted repeatedly, but vcpkg
+  remained blocked waiting on its manifest lock after dependency restoration;
+  it could not complete in this session.

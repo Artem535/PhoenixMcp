@@ -7,6 +7,8 @@
 #include "phoenix_mcp/tool_registry/tool_registry.h"
 #include "phoenix_mcp/tool_registry/utils.h"
 #include "phoenix_mcp/transport/abstract_transport.h"
+#include "phoenix_mcp/transport/crow_transport.h"
+#include "phoenix_mcp/transport/drogon_transport.h"
 #include "phoenix_mcp/transport/i_transport.h"
 #include "phoenix_mcp/transport/stdio_transport.h"
 
