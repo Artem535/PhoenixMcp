@@ -26,51 +26,113 @@ The main goal is to simplify the creation of tool servers for AI assistants by p
 
 == Requirements
 
-* Compiler with full C++20 support (GCC 11+, Clang 13+, MSVC 2022+)
-* https://xmake.io[Xmake] 2.8+ — build system
-* https://vcpkg.io[Vcpkg] — package manager (integrated with xmake)
-* Operating system: Linux, macOS, Windows (WSL)
+* Compiler with full C++20 support (GCC 11+, Clang 13+, MSVC 2022+, AppleClang 14+)
+* https://cmake.org[CMake] 3.28+ (primary build system)
+* https://ninja-build.org[Ninja] — build tool (required by CMake presets)
+* https://vcpkg.io[Vcpkg] — package manager (set `VCPKG_ROOT` environment variable)
+* Optional: https://xmake.io[Xmake] 2.8+ (secondary build system)
 
 == Installation and Build
 
-=== Cloning
+PhoenixMcp uses **CMake as its primary build system**. Xmake is supported as a secondary frontend for development smoke checks and does not provide package export or install targets.
+
+=== Prerequisites
 
 [source,bash]
 ----
 git clone <repository-url>
 cd PhoenixMcp
+export VCPKG_ROOT=/path/to/vcpkg   # required for dependency resolution
 ----
 
-=== Dependencies
+=== CMake Build (primary)
 
-Xmake will automatically install required packages via vcpkg:
-- `reflectcpp` — reflection and serialization
-- `yyjson` — fast JSON parser
-- `spdlog` — logging
+Debug build with minimal features (stdio-only):
 
-=== Build
+[source,bash]
+----
+cmake --preset linux-minimal
+cmake --build --preset linux-minimal
+ctest --preset linux-minimal
+----
 
-Debug version:
+Debug build with all available features (requires HTTP dependencies):
+
+[source,bash]
+----
+cmake --preset linux-all-features
+cmake --build --preset linux-all-features
+ctest --preset linux-all-features
+----
+
+Release build:
+
+[source,bash]
+----
+cmake --preset linux-release
+cmake --build --preset linux-release
+ctest --preset linux-release
+----
+
+Available presets:
+
+[cols="2,1,1,1",options="header"]
+|===
+|Preset          |Configure |Build |Test
+|`linux-debug`   |✓         |✓     |✓
+|`linux-release` |✓         |✓     |✓
+|`linux-minimal` |✓         |✓     |✓
+|`linux-all-features`|✓    |✓     |✓
+|`linux-asan`    |✓         |✓     |✓
+|`linux-tsan`    |✓         |✓     |✓
+|`linux-ubsan`   |✓         |✓     |✓
+|`clang-debug`   |✓         |✓     |✓
+|`gcc-debug`     |✓         |✓     |✓
+|`windows-msvc`  |✓         |✓     |✓
+|`macos-clang`   |✓         |✓     |✓
+|===
+
+=== Package Install and Consumer Workflow
+
+Install the SDK to a local prefix:
+
+[source,bash]
+----
+cmake --install build/linux-minimal --prefix /path/to/install
+----
+
+A downstream CMake project can then find the SDK via `find_package`:
+
+[source,cmake]
+----
+find_package(PhoenixMcp CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE PhoenixMcp::Server PhoenixMcp::TransportStdio)
+----
+
+=== Xmake Build (secondary)
+
+Xmake provides an alternative development build for Linux smoke checks. It does not support package export or install.
 
 [source,bash]
 ----
 xmake f -m debug
-xmake -j$(nproc)
+xmake
 ----
 
-Release version with optimizations:
-
-[source,bash]
-----
-xmake f -m release
-xmake -j$(nproc)
-----
-
-=== Installation Check
+HTTP backends and telemetry are controlled by environment variables:
 
 [source,bash]
 ----
-xmake run create_server --help  # Help output (if implemented)
+PHOENIX_MCP_WITH_DROGON=1 xmake f -m debug -y   # enable Drogon transport
+PHOENIX_MCP_WITH_OTEL=1 xmake f -m debug -y      # enable OpenTelemetry
+----
+
+=== Quick Examples
+
+[source,bash]
+----
+xmake run create_server          # stdio-based MCP server
+xmake run using_tool_registry    # standalone tool registry demo
 ----
 
 == Quick Start
@@ -385,14 +447,30 @@ if (request.method == "resources/read") {
 
 == Testing
 
-The project includes basic examples that serve as integration tests:
+The project includes CTest-discoverable unit tests and integration smoke checks.
+
+=== Unit Tests (CTest)
 
 [source,bash]
 ----
-# Run test server
-xmake run create_server &
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug --output-on-failure
+----
 
-# Send test request (via echo/nc)
+Tests cover:
+
+* JSON-RPC message parsing (request, notification, response, error)
+* Error model serialization and round-trip
+* Public header compilation checks
+* Installed package consumer verification
+
+=== Integration Smoke Tests
+
+[source,bash]
+----
+# Run stdio server example
+xmake run create_server &
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | nc localhost 8080
 ----
 
@@ -489,8 +567,8 @@ MIT License
 
 1. Fork the repository
 2. Create a branch: `git checkout -b feature/my-feature`
-3. Apply formatting: `clang-format -i src/**/*.cpp src/**/*.hpp`
-4. Check static analysis: `xmake check` (if configured)
+3. Apply formatting: `rtk run 'clang-format -i path/to/file.cc path/to/file.h'`
+4. Build and test: `rtk run 'cmake --preset linux-debug && cmake --build --preset linux-debug && ctest --preset linux-debug --output-on-failure'`
 5. Submit PR with change description
 
 == Credits
@@ -504,6 +582,7 @@ MIT License
 * https://spec.modelcontextprotocol.io[MCP Protocol Specification]
 * https://github.com/getml/reflect-cpp[reflectcpp Documentation]
 * https://github.com/gabime/spdlog[spdlog Documentation]
+* https://cmake.org[CMake Documentation]
 * https://xmake.io[Xmake Documentation]
 
 == FAQ

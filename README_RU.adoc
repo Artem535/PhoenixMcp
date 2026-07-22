@@ -24,51 +24,113 @@ PhoenixMCP — это современная реализация сервера
 
 == Требования
 
-* Компилятор с полной поддержкой C++20 (GCC 11+, Clang 13+, MSVC 2022+)
-* https://xmake.io[Xmake] 2.8+ — система сборки
-* https://vcpkg.io[Vcpkg] — менеджер пакетов (интегрирован с xmake)
-* Операционная система: Linux, macOS, Windows (WSL)
+* Компилятор с полной поддержкой C++20 (GCC 11+, Clang 13+, MSVC 2022+, AppleClang 14+)
+* https://cmake.org[CMake] 3.28+ (основная система сборки)
+* https://ninja-build.org[Ninja] — инструмент сборки (требуется CMake presets)
+* https://vcpkg.io[Vcpkg] — менеджер пакетов (установите переменную `VCPKG_ROOT`)
+* Опционально: https://xmake.io[Xmake] 2.8+ (вторичная система сборки)
 
 == Установка и сборка
 
-=== Клонирование
+PhoenixMcp использует **CMake в качестве основной системы сборки**. Xmake поддерживается как вторичный интерфейс для быстрой проверки и не предоставляет экспорт пакетов или установку.
+
+=== Предварительные требования
 
 [source,bash]
 ----
 git clone <repository-url>
 cd PhoenixMcp
+export VCPKG_ROOT=/path/to/vcpkg   # требуется для разрешения зависимостей
 ----
 
-=== Загрузка зависимостей
+=== Сборка через CMake (основная)
 
-Xmake автоматически установит необходимые пакеты через vcpkg:
-- `reflectcpp` — рефлексия и сериализация
-- `yyjson` — быстрый парсер JSON
-- `spdlog` — логирование
+Отладочная сборка с минимальным набором функций (только stdio):
 
-=== Сборка
+[source,bash]
+----
+cmake --preset linux-minimal
+cmake --build --preset linux-minimal
+ctest --preset linux-minimal
+----
 
-Отладочная версия:
+Отладочная сборка со всеми функциями (требует HTTP-зависимости):
+
+[source,bash]
+----
+cmake --preset linux-all-features
+cmake --build --preset linux-all-features
+ctest --preset linux-all-features
+----
+
+Релизная сборка:
+
+[source,bash]
+----
+cmake --preset linux-release
+cmake --build --preset linux-release
+ctest --preset linux-release
+----
+
+Доступные preset-ы:
+
+[cols="2,1,1,1",options="header"]
+|===
+|Preset          |Configure |Build |Test
+|`linux-debug`   |✓         |✓     |✓
+|`linux-release` |✓         |✓     |✓
+|`linux-minimal` |✓         |✓     |✓
+|`linux-all-features`|✓    |✓     |✓
+|`linux-asan`    |✓         |✓     |✓
+|`linux-tsan`    |✓         |✓     |✓
+|`linux-ubsan`   |✓         |✓     |✓
+|`clang-debug`   |✓         |✓     |✓
+|`gcc-debug`     |✓         |✓     |✓
+|`windows-msvc`  |✓         |✓     |✓
+|`macos-clang`   |✓         |✓     |✓
+|===
+
+=== Установка пакета и использование в проекте
+
+Установка SDK в локальный префикс:
+
+[source,bash]
+----
+cmake --install build/linux-minimal --prefix /path/to/install
+----
+
+Внешний CMake-проект может найти SDK через `find_package`:
+
+[source,cmake]
+----
+find_package(PhoenixMcp CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE PhoenixMcp::Server PhoenixMcp::TransportStdio)
+----
+
+=== Сборка через Xmake (вторичная)
+
+Xmake предоставляет альтернативную сборку для быстрой проверки на Linux и не поддерживает экспорт пакетов или установку.
 
 [source,bash]
 ----
 xmake f -m debug
-xmake -j$(nproc)
+xmake
 ----
 
-Релизная версия с оптимизациями:
-
-[source,bash]
-----
-xmake f -m release
-xmake -j$(nproc)
-----
-
-=== Проверка установки
+HTTP-бэкенды и телеметрия управляются переменными окружения:
 
 [source,bash]
 ----
-xmake run create_server --help  # Вывод справки (если реализован)
+PHOENIX_MCP_WITH_DROGON=1 xmake f -m debug -y   # включить Drogon транспорт
+PHOENIX_MCP_WITH_OTEL=1 xmake f -m debug -y      # включить OpenTelemetry
+----
+
+=== Быстрые примеры
+
+[source,bash]
+----
+xmake run create_server          # stdio MCP сервер
+xmake run using_tool_registry    # демо ToolRegistry
 ----
 
 == Быстрый старт
@@ -374,18 +436,25 @@ if (request.method == "resources/read") {
 
 == Тестирование
 
-Проект включает базовые примеры, служащие интеграционными тестами:
+Проект включает CTest-тесты и интеграционные проверки.
+
+=== Модульные тесты (CTest)
 
 [source,bash]
 ----
-# Запуск тестового сервера
-xmake run create_server &
-
-# Отправка тестового запроса (через echo/nc)
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | nc localhost 8080
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug --output-on-failure
 ----
 
-=== HTTP Async Smoke Test
+Тесты покрывают:
+
+* Парсинг JSON-RPC сообщений (запрос, уведомление, ответ, ошибка)
+* Сериализацию и round-trip модели ошибок
+* Проверку компиляции публичных заголовков
+* Верификацию установленного пакета
+
+=== Интеграционные smoke-тесты
 
 Пример `create_server_http` использует `DrogonTransport` и экспортирует:
 
@@ -479,8 +548,8 @@ MIT License (TODO: добавить LICENSE файл)
 
 1. Форкните репозиторий
 2. Создайте ветку: `git checkout -b feature/my-feature`
-3. Примените форматирование: `clang-format -i src/**/*.cpp src/**/*.hpp`
-4. Проверьте статический анализ: `xmake check` (если сконфигурировано)
+3. Примените форматирование: `rtk run 'clang-format -i path/to/file.cc path/to/file.h'`
+4. Соберите и протестируйте: `rtk run 'cmake --preset linux-debug && cmake --build --preset linux-debug && ctest --preset linux-debug --output-on-failure'`
 5. Отправьте PR с описанием изменений
 
 == Благодарности
