@@ -64,7 +64,8 @@
       "name": "linux-tsan",
       "inherits": "linux-debug",
       "cacheVariables": {
-        "PHOENIX_MCP_ENABLE_SANITIZERS": "ON"
+        "PHOENIX_MCP_ENABLE_SANITIZERS": "OFF",
+        "PHOENIX_MCP_ENABLE_THREAD_SANITIZER": "ON"
       }
     },
     {

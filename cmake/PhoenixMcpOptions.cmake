@@ -15,5 +15,6 @@ option(PHOENIX_MCP_ENABLE_OTEL "Enable OpenTelemetry integration" OFF)
 
 # Tooling is opt-in so default release builds stay portable.
 option(PHOENIX_MCP_ENABLE_SANITIZERS "Enable address and undefined sanitizers" OFF)
+option(PHOENIX_MCP_ENABLE_THREAD_SANITIZER "Enable ThreadSanitizer" OFF)
 option(PHOENIX_MCP_ENABLE_CLANG_TIDY "Run clang-tidy during compilation" OFF)
 option(PHOENIX_MCP_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
