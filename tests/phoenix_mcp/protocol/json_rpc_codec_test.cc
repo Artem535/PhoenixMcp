@@ -149,6 +149,32 @@ TEST(JsonRpcCodecTest, EncodeNotification) {
             std::string::npos);
 }
 
+TEST(JsonRpcCodecTest, EncodeRequest) {
+  Request req{.jsonrpc = "2.0",
+              .method = "tools/call",
+              .id = 1,
+              .params = rfl::Generic{std::string("{}")}};
+  auto encoded = encode(req);
+  ASSERT_TRUE(encoded.hasValue());
+  EXPECT_NE(encoded.value().find("tools/call"), std::string::npos);
+}
+
+TEST(JsonRpcCodecTest, DecodeMessageAmbiguous) {
+  auto result = decode_message(
+      R"({"jsonrpc":"2.0","method":"ping","id":1,"result":{}})");
+  EXPECT_FALSE(result.hasValue());
+  EXPECT_EQ(result.error().code(),
+            phoenix_mcp::core::ErrorCode::InvalidRequest);
+}
+
+TEST(JsonRpcCodecTest, DecodeMessageAmbiguousMethodError) {
+  auto result = decode_message(
+      R"({"jsonrpc":"2.0","method":"ping","id":1,"error":{"code":-1}})");
+  EXPECT_FALSE(result.hasValue());
+  EXPECT_EQ(result.error().code(),
+            phoenix_mcp::core::ErrorCode::InvalidRequest);
+}
+
 TEST(JsonRpcCodecTest, RoundTrip) {
   const auto json =
       R"({"jsonrpc":"2.0","method":"ping","id":42})";

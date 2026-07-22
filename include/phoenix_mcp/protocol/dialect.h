@@ -1,11 +1,11 @@
 #ifndef PHOENIX_MCP_PROTOCOL_DIALECT_H_
 #define PHOENIX_MCP_PROTOCOL_DIALECT_H_
 
-#include <folly/Expected.h>
-
 #include <memory>
 #include <string>
 #include <variant>
+
+#include <folly/Expected.h>
 
 #include "phoenix_mcp/core/error.h"
 #include "phoenix_mcp/protocol/json_rpc_codec.h"
@@ -18,7 +18,9 @@ using ProtocolVersion = std::string;
 struct InitializeCall {
   msg::types::InitializeRequest request;
 };
-struct PingCall {};
+struct PingCall {
+  msg::types::RequestId id;
+};
 struct ListToolsCall {
   msg::types::ListToolsRequest request;
 };

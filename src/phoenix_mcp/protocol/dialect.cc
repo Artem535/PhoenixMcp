@@ -19,14 +19,17 @@ int to_jsonrpc_code(ErrorCode code) {
       return -32601;
     case ErrorCode::InvalidParams:
       return -32602;
+    case ErrorCode::AuthenticationFailed:
+      return -32000;
+    case ErrorCode::AuthorizationFailed:
+      return -32001;
     case ErrorCode::InternalError:
-      return -32603;
     default:
       return -32603;
   }
 }
 
-class Dialect2025_06_18 : public ProtocolDialect {
+class Dialect20250618 : public ProtocolDialect {
  public:
   ProtocolVersion version() const override { return "2025-06-18"; }
 
@@ -49,8 +52,8 @@ class Dialect2025_06_18 : public ProtocolDialect {
     msg::types::RequestId id;
     if (auto* init = std::get_if<InitializeCall>(&request)) {
       id = init->request.flatten.get().id;
-    } else if (std::get_if<PingCall>(&request)) {
-      id = 0;
+    } else if (auto* ping = std::get_if<PingCall>(&request)) {
+      id = ping->id;
     } else if (auto* list = std::get_if<ListToolsCall>(&request)) {
       id = list->request.flatten.get().id;
     } else if (auto* call = std::get_if<CallToolCall>(&request)) {
@@ -69,7 +72,8 @@ class Dialect2025_06_18 : public ProtocolDialect {
         .id = id,
         .error = msg::types::ErrorData{
             .code = to_jsonrpc_code(error.code()),
-            .message = error.message()}};
+            .message = error.message(),
+            .data = error.data()}};
   }
 
   CapabilityRules capability_rules() const override {
@@ -157,7 +161,7 @@ class Dialect2025_06_18 : public ProtocolDialect {
           InitializeNotificationCall{init.value()}};
     }
 
-    if (notif.method == "notification/tools/listChanged") {
+    if (notif.method == "notifications/tools/list_changed") {
       auto changed =
           rfl::json::read<msg::types::ToolListChangedNotification>(
               rfl::json::write(notif));
@@ -179,7 +183,7 @@ class Dialect2025_06_18 : public ProtocolDialect {
 }  // namespace
 
 std::unique_ptr<ProtocolDialect> make_dialect_2025_06_18() {
-  return std::make_unique<Dialect2025_06_18>();
+  return std::make_unique<Dialect20250618>();
 }
 
 std::unique_ptr<ProtocolDialect> make_dialect(

@@ -8,16 +8,16 @@ using namespace phoenix_mcp::protocol;
 using namespace phoenix_mcp::msg::types;
 using namespace phoenix_mcp::core;
 
-class Dialect2025_06_18Test : public ::testing::Test {
+class Dialect20250618Test : public ::testing::Test {
  protected:
   std::unique_ptr<ProtocolDialect> dialect_ = make_dialect_2025_06_18();
 };
 
-TEST_F(Dialect2025_06_18Test, Version) {
+TEST_F(Dialect20250618Test, Version) {
   EXPECT_EQ(dialect_->version(), "2025-06-18");
 }
 
-TEST_F(Dialect2025_06_18Test, CapabilityRules) {
+TEST_F(Dialect20250618Test, CapabilityRules) {
   auto rules = dialect_->capability_rules();
   EXPECT_TRUE(rules.supports_tools);
   EXPECT_FALSE(rules.supports_resources);
@@ -25,7 +25,7 @@ TEST_F(Dialect2025_06_18Test, CapabilityRules) {
   EXPECT_FALSE(rules.supports_logging);
 }
 
-TEST_F(Dialect2025_06_18Test, DecodeInitializeRequest) {
+TEST_F(Dialect20250618Test, DecodeInitializeRequest) {
   JsonRpcMessage msg =
       Request{.jsonrpc = "2.0",
               .method = "initialize",
@@ -38,7 +38,7 @@ TEST_F(Dialect2025_06_18Test, DecodeInitializeRequest) {
   EXPECT_TRUE(std::holds_alternative<InitializeCall>(req));
 }
 
-TEST_F(Dialect2025_06_18Test, DecodePingRequest) {
+TEST_F(Dialect20250618Test, DecodePingRequest) {
   JsonRpcMessage msg =
       Request{.jsonrpc = "2.0", .method = "ping", .id = 1};
   auto result = dialect_->decode(msg);
@@ -47,7 +47,7 @@ TEST_F(Dialect2025_06_18Test, DecodePingRequest) {
   EXPECT_TRUE(std::holds_alternative<PingCall>(req));
 }
 
-TEST_F(Dialect2025_06_18Test, DecodeListToolsRequest) {
+TEST_F(Dialect20250618Test, DecodeListToolsRequest) {
   JsonRpcMessage msg =
       Request{.jsonrpc = "2.0", .method = "tools/list", .id = 1};
   auto result = dialect_->decode(msg);
@@ -56,7 +56,7 @@ TEST_F(Dialect2025_06_18Test, DecodeListToolsRequest) {
   EXPECT_TRUE(std::holds_alternative<ListToolsCall>(req));
 }
 
-TEST_F(Dialect2025_06_18Test, DecodeCallToolRequest) {
+TEST_F(Dialect20250618Test, DecodeCallToolRequest) {
   rfl::Generic::Object args;
   args["x"] = rfl::Generic{5};
   CallToolParams call_params{.name = "test_tool",
@@ -72,7 +72,7 @@ TEST_F(Dialect2025_06_18Test, DecodeCallToolRequest) {
   EXPECT_TRUE(std::holds_alternative<CallToolCall>(req));
 }
 
-TEST_F(Dialect2025_06_18Test, DecodeInitializedNotification) {
+TEST_F(Dialect20250618Test, DecodeInitializedNotification) {
   JsonRpcMessage msg = Notification{
       .jsonrpc = "2.0", .method = "notifications/initialized"};
   auto result = dialect_->decode(msg);
@@ -82,7 +82,7 @@ TEST_F(Dialect2025_06_18Test, DecodeInitializedNotification) {
       std::holds_alternative<InitializeNotificationCall>(notif));
 }
 
-TEST_F(Dialect2025_06_18Test, DecodeCancelNotification) {
+TEST_F(Dialect20250618Test, DecodeCancelNotification) {
   JsonRpcMessage msg = Notification{
       .jsonrpc = "2.0", .method = "notifications/cancelled"};
   auto result = dialect_->decode(msg);
@@ -92,10 +92,10 @@ TEST_F(Dialect2025_06_18Test, DecodeCancelNotification) {
       std::holds_alternative<CancelNotificationCall>(notif));
 }
 
-TEST_F(Dialect2025_06_18Test, DecodeToolListChangedNotification) {
+TEST_F(Dialect20250618Test, DecodeToolListChangedNotification) {
   JsonRpcMessage msg = Notification{
       .jsonrpc = "2.0",
-      .method = "notification/tools/listChanged"};
+      .method = "notifications/tools/list_changed"};
   auto result = dialect_->decode(msg);
   ASSERT_TRUE(result.hasValue());
   auto& notif = std::get<McpNotification>(result.value());
@@ -103,7 +103,7 @@ TEST_F(Dialect2025_06_18Test, DecodeToolListChangedNotification) {
               ToolListChangedNotificationCall>(notif));
 }
 
-TEST_F(Dialect2025_06_18Test, DecodeUnknownMethod) {
+TEST_F(Dialect20250618Test, DecodeUnknownMethod) {
   JsonRpcMessage msg =
       Request{.jsonrpc = "2.0", .method = "unknown", .id = 1};
   auto result = dialect_->decode(msg);
@@ -111,7 +111,7 @@ TEST_F(Dialect2025_06_18Test, DecodeUnknownMethod) {
   EXPECT_EQ(result.error().code(), ErrorCode::MethodNotFound);
 }
 
-TEST_F(Dialect2025_06_18Test, DecodeResponseFails) {
+TEST_F(Dialect20250618Test, DecodeResponseFails) {
   JsonRpcMessage msg =
       Response{.jsonrpc = "2.0",
                .result = rfl::Generic{},
@@ -121,7 +121,7 @@ TEST_F(Dialect2025_06_18Test, DecodeResponseFails) {
   EXPECT_EQ(result.error().code(), ErrorCode::InvalidRequest);
 }
 
-TEST_F(Dialect2025_06_18Test, EncodeResult) {
+TEST_F(Dialect20250618Test, EncodeResult) {
   McpRequest req = InitializeCall{
       InitializeRequest{Request{.jsonrpc = "2.0",
                                 .method = "initialize",
@@ -132,7 +132,7 @@ TEST_F(Dialect2025_06_18Test, EncodeResult) {
   EXPECT_EQ(encoded.value().jsonrpc, "2.0");
 }
 
-TEST_F(Dialect2025_06_18Test, EncodeError) {
+TEST_F(Dialect20250618Test, EncodeError) {
   McpError err(ErrorCode::MethodNotFound, "no such method");
   auto encoded = dialect_->encode_error(1, err);
   ASSERT_TRUE(encoded.hasValue());
@@ -140,13 +140,13 @@ TEST_F(Dialect2025_06_18Test, EncodeError) {
   EXPECT_EQ(encoded.value().error.message, "no such method");
 }
 
-TEST_F(Dialect2025_06_18Test, MakeDialect2025_06_18) {
+TEST_F(Dialect20250618Test, MakeDialect2025_06_18) {
   auto d = make_dialect("2025-06-18");
   ASSERT_NE(d, nullptr);
   EXPECT_EQ(d->version(), "2025-06-18");
 }
 
-TEST_F(Dialect2025_06_18Test, MakeDialectUnknownReturnsNull) {
+TEST_F(Dialect20250618Test, MakeDialectUnknownReturnsNull) {
   auto d = make_dialect("9999-99-99");
   EXPECT_EQ(d, nullptr);
 }

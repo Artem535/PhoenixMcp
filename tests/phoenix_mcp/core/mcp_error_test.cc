@@ -113,10 +113,32 @@ TEST(McpErrorTest, DefaultConstructorIsOk) {
 }
 
 TEST(McpErrorTest, ErrorMessageCoverage) {
-  for (int i = 0; i <= static_cast<int>(ErrorCode::InternalError); ++i) {
+  for (int i = 0; i <= static_cast<int>(ErrorCode::AuthorizationFailed); ++i) {
     auto code = static_cast<ErrorCode>(i);
     auto ec = make_error_code(code);
     EXPECT_FALSE(ec.message().empty())
         << "Empty message for code " << i;
   }
+}
+
+TEST(McpErrorTest, CategoryAuthentication) {
+  McpError e(ErrorCode::AuthenticationFailed, "invalid token");
+  EXPECT_EQ(e.category(), ErrorCategory::Authentication);
+  EXPECT_EQ(e.code(), ErrorCode::AuthenticationFailed);
+}
+
+TEST(McpErrorTest, CategoryAuthorization) {
+  McpError e(ErrorCode::AuthorizationFailed, "forbidden");
+  EXPECT_EQ(e.category(), ErrorCategory::Authorization);
+  EXPECT_EQ(e.code(), ErrorCode::AuthorizationFailed);
+}
+
+TEST(McpErrorTest, WithDataAndCause) {
+  rfl::Generic data{std::string("detail")};
+  auto cause = std::make_shared<McpError>(ErrorCode::InvalidJson, "bad");
+  McpError e(ErrorCode::DeserializationFailed, "parse", data, cause);
+  EXPECT_TRUE(e);
+  EXPECT_EQ(e.category(), ErrorCategory::Serialization);
+  ASSERT_NE(e.cause(), nullptr);
+  EXPECT_EQ(e.cause()->code(), ErrorCode::InvalidJson);
 }
