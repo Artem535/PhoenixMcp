@@ -16,6 +16,14 @@ local with_crow = os.getenv("PHOENIX_MCP_WITH_CROW") ~= "0"
 -- Core    : runtime, constants (no public header — private only)
 -- Protocol: message_types.h (header-only)
 -- Server  : server, session, request_handler, tool_registry
+-- Client  : header-only stub (MCP Client implementation deferred)
+-- The following CMake modules have no Xmake mirror:
+--   Host         — MCP Host role, deferred
+--   TransportHttp— base HTTP types, deferred
+--   TransportDrogon— see phoenix_mcp_transport_drogon below
+--   TransportCrow  — see phoenix_mcp_transport_crow below
+--   Telemetry    — see phoenix_mcp_telemetry below
+--   Testing      — CMake/CTest only
 
 target("phoenix_mcp_core")
     set_kind("static")
@@ -35,6 +43,11 @@ target("phoenix_mcp_server")
     add_includedirs("src", "include", {public = true})
     add_deps("phoenix_mcp_protocol")
     add_packages("vcpkg::reflectcpp", "vcpkg::folly", "vcpkg::spdlog", {public = true})
+
+target("phoenix_mcp_client")
+    set_kind("headeronly")
+    add_includedirs("include", {public = true})
+    add_deps("phoenix_mcp_protocol")
 
 target("phoenix_mcp_transport_stdio")
     set_kind("static")

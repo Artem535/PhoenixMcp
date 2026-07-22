@@ -53,4 +53,13 @@ if(NOT build_result EQUAL 0)
   message(FATAL_ERROR "Consumer build failed:\n${build_output}\n${build_error}")
 endif()
 
+execute_process(
+  COMMAND "${consumer_dir}/build/consumer_check"
+  RESULT_VARIABLE run_result
+  OUTPUT_VARIABLE run_output
+  ERROR_VARIABLE run_error)
+if(NOT run_result EQUAL 0)
+  message(FATAL_ERROR "Consumer run failed (exit ${run_result}):\n${run_output}\n${run_error}")
+endif()
+
 message(STATUS "Package consumer test passed: ${consumer_dir}")

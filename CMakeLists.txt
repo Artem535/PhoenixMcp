@@ -191,7 +191,7 @@ install(FILES
 if(BUILD_TESTING)
   include(GoogleTest)
 
-add_executable(phoenix_mcp_public_headers_test
+  add_executable(phoenix_mcp_public_headers_test
     tests/phoenix_mcp/server/public_headers_test.cc)
   target_link_libraries(phoenix_mcp_public_headers_test
     PRIVATE PhoenixMcp::Server PhoenixMcp::TransportStdio)

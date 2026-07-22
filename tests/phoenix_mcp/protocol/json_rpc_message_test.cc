@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-
 #include <rfl/json.hpp>
 
 #include "phoenix_mcp/protocol/message_types.h"
