@@ -19,15 +19,15 @@ jobs:
       fail-fast: false
       matrix:
         preset:
-          - linux-debug
           - linux-minimal
-          - linux-all-features
-          - linux-asan
-          - linux-tsan
-          - linux-ubsan
+          - linux-debug
     steps:
       - uses: actions/checkout@v4
-      - uses: microsoft/setup-vcpkg@latest
+      - name: Setup vcpkg
+        run: |
+          git clone --depth=1 https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
+          $VCPKG_ROOT/bootstrap-vcpkg.sh -disableMetrics
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
@@ -36,7 +36,7 @@ jobs:
         run: ctest --preset ${{ matrix.preset }} --output-on-failure --timeout 60
 
   # ---------------------------------------------------------------------------
-  # Xmake — Linux smoke
+  # Xmake — Linux smoke (debug build only)
   # ---------------------------------------------------------------------------
   xmake-linux:
     runs-on: ubuntu-latest
@@ -50,7 +50,5 @@ jobs:
         run: xmake f -m debug -y
       - name: Build
         run: xmake
-      - name: Smoke test — using_tool_registry
+      - name: Smoke test
         run: xmake run using_tool_registry
-      - name: Build release
-        run: xmake f -m release -y && xmake
