@@ -1,4 +1,5 @@
 # Build directories
+.worktrees/
 build/
 build.*/
 .xmake/
@@ -51,6 +52,7 @@ phoenix_mcp  # Your binary name
 
 # Core dumps
 core
+!include/phoenix_mcp/core/
 core.*
 *.core
 

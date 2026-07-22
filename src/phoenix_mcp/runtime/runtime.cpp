@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <thread>
 
-namespace pxm::runtime {
+namespace phoenix_mcp::runtime {
 
 namespace {
 
@@ -11,20 +11,18 @@ size_t sanitize_threads(const size_t requested) {
   return std::max<size_t>(1, requested);
 }
 
-} // namespace
+}  // namespace
 
 Runtime::Runtime(const size_t cpu_threads, const size_t io_threads)
     : cpu_pool_(sanitize_threads(cpu_threads)),
-      io_pool_(sanitize_threads(io_threads)) {
-}
+      io_pool_(sanitize_threads(io_threads)) {}
 
 folly::Executor::KeepAlive<folly::CPUThreadPoolExecutor>
 Runtime::cpu_executor() {
   return cpu_pool_.getKeepAliveToken(cpu_pool_);
 }
 
-folly::Executor::KeepAlive<folly::IOThreadPoolExecutor>
-Runtime::io_executor() {
+folly::Executor::KeepAlive<folly::IOThreadPoolExecutor> Runtime::io_executor() {
   return io_pool_.getKeepAliveToken(io_pool_);
 }
 
@@ -36,4 +34,4 @@ std::shared_ptr<Runtime> make_default_runtime() {
   return std::make_shared<Runtime>(cpu_threads, io_threads);
 }
 
-} // namespace pxm::runtime
+}  // namespace phoenix_mcp::runtime

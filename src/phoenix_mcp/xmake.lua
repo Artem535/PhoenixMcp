@@ -3,61 +3,105 @@ add_rules("mode.release", "mode.debug")
 set_languages("c++20")
 add_defines("GLOG_USE_GLOG_EXPORT")
 
-add_requires("vcpkg::reflectcpp 0.22.0")
-add_requires("vcpkg::yyjson")
-add_requires("vcpkg::spdlog")
-add_requires("crow")
-add_requires("vcpkg::folly")
-add_requires("vcpkg::glog")
-add_requires("vcpkg::gflags")
-add_requires("vcpkg::boost-context")
-add_requires("vcpkg::libevent")
-add_requires("vcpkg::double-conversion")
-add_requires("vcpkg::drogon")
-add_requires("vcpkg::trantor")
-add_requires("vcpkg::jsoncpp")
-add_requires("vcpkg::openssl")
-add_requires("vcpkg::brotli")
-add_requires("vcpkg::zlib")
-add_requires("vcpkg::libuuid")
-add_requires("vcpkg::c-ares")
-
-local with_otel = os.getenv("PHOENIX_MCP_WITH_OTEL") == "1"
-
-if with_otel then
-    add_requires("opentelemetry-cpp")
-end
-
 local vcpkg_root = os.getenv("VCPKG_ROOT")
 if vcpkg_root then
     add_includedirs(path.join(vcpkg_root, "installed", "x64-linux", "include"))
 end
 
-target("phoenix_mcp")
-	set_kind("static")
-	add_files("*/*.cpp", {public=true})
-	add_includedirs(".", {public = true})
-	add_packages("vcpkg::reflectcpp", {public = true})
-	add_packages("vcpkg::yyjson", {public = true})
-	add_packages("vcpkg::spdlog", {public = true})
-	add_packages("crow", {public = true})
-	add_packages("vcpkg::folly", {public = true})
-	add_packages("vcpkg::glog", {public = true})
-	add_packages("vcpkg::gflags", {public = true})
-	add_packages("vcpkg::boost-context", {public = true})
-	add_packages("vcpkg::libevent", {public = true})
-	add_packages("vcpkg::double-conversion", {public = true})
-	add_packages("vcpkg::drogon", {public = true})
-	add_packages("vcpkg::trantor", {public = true})
-	add_packages("vcpkg::jsoncpp", {public = true})
-	add_packages("vcpkg::openssl", {public = true})
-	add_packages("vcpkg::brotli", {public = true})
-	add_packages("vcpkg::zlib", {public = true})
-	add_packages("vcpkg::libuuid", {public = true})
-	add_packages("vcpkg::c-ares", {public = true})
-    if with_otel then
+local with_otel = os.getenv("PHOENIX_MCP_WITH_OTEL") == "1"
+local with_drogon = os.getenv("PHOENIX_MCP_WITH_DROGON") ~= "0"
+local with_crow = os.getenv("PHOENIX_MCP_WITH_CROW") ~= "0"
+
+-- Mirror of the CMake module graph.
+-- Core    : runtime, constants (no public header — private only)
+-- Protocol: message_types.h (header-only)
+-- Server  : server, session, request_handler, tool_registry
+-- Client  : header-only stub (MCP Client implementation deferred)
+-- The following CMake modules have no Xmake mirror:
+--   Host         — MCP Host role, deferred
+--   TransportHttp— base HTTP types, deferred
+--   TransportDrogon— see phoenix_mcp_transport_drogon below
+--   TransportCrow  — see phoenix_mcp_transport_crow below
+--   Telemetry    — see phoenix_mcp_telemetry below
+--   Testing      — CMake/CTest only
+
+target("phoenix_mcp_core")
+    set_kind("static")
+    add_files("src/phoenix_mcp/runtime/runtime.cpp")
+    add_includedirs("src", "include", {public = true})
+    add_packages("vcpkg::folly", "vcpkg::spdlog", {public = true})
+
+target("phoenix_mcp_protocol")
+    set_kind("headeronly")
+    add_includedirs("include", {public = true})
+    add_deps("phoenix_mcp_core")
+
+target("phoenix_mcp_server")
+    set_kind("static")
+    add_files("src/phoenix_mcp/server/*.cpp")
+    add_files("src/phoenix_mcp/tool_registry/tool_registry.cpp")
+    add_includedirs("src", "include", {public = true})
+    add_deps("phoenix_mcp_protocol")
+    add_packages("vcpkg::reflectcpp", "vcpkg::folly", "vcpkg::spdlog", {public = true})
+
+target("phoenix_mcp_client")
+    set_kind("headeronly")
+    add_includedirs("include", {public = true})
+    add_deps("phoenix_mcp_protocol")
+
+target("phoenix_mcp_transport_stdio")
+    set_kind("static")
+    add_files("src/phoenix_mcp/transport/stdio_transport.cpp")
+    add_includedirs("src", "include", {public = true})
+    add_deps("phoenix_mcp_core")
+    add_packages("vcpkg::folly", "vcpkg::spdlog", {public = true})
+
+if with_drogon then
+    target("phoenix_mcp_transport_drogon")
+        set_kind("static")
+        add_files("src/phoenix_mcp/transport/drogon_transport.cpp")
+        add_includedirs("src", "include", {public = true})
+        add_deps("phoenix_mcp_core")
+        add_packages("vcpkg::folly", "vcpkg::spdlog", "vcpkg::drogon", {public = true})
+else
+    -- Drogon transport is optional. To enable, set PHOENIX_MCP_WITH_DROGON=1.
+    -- Xmake does not provide Drogon-dependent targets by default.
+end
+
+if with_crow then
+    target("phoenix_mcp_transport_crow")
+        set_kind("static")
+        add_files("src/phoenix_mcp/transport/crow_transport.cpp")
+        add_includedirs("src", "include", {public = true})
+        add_deps("phoenix_mcp_core")
+        add_packages("vcpkg::folly", "vcpkg::spdlog", "crow", {public = true})
+else
+    -- Crow transport is optional. To enable, set PHOENIX_MCP_WITH_CROW=1.
+    -- Xmake does not provide Crow-dependent targets by default.
+end
+
+if with_otel then
+    target("phoenix_mcp_telemetry")
+        set_kind("headeronly")
+        add_includedirs("include", {public = true})
+        add_deps("phoenix_mcp_core")
         add_packages("opentelemetry-cpp", {public = true})
         add_defines("PXM_WITH_OTEL=1", {public = true})
     else
         add_defines("PXM_WITH_OTEL=0", {public = true})
+    end
+
+-- Legacy monolithic target (kept for backward compatibility)
+target("phoenix_mcp")
+    set_kind("static")
+    add_deps("phoenix_mcp_core", "phoenix_mcp_protocol", "phoenix_mcp_server",
+             "phoenix_mcp_transport_stdio")
+    if with_drogon then
+        add_deps("phoenix_mcp_transport_drogon")
+    end
+    if with_crow then
+        add_deps("phoenix_mcp_transport_crow")
+    end
+    if with_otel then
+        add_deps("phoenix_mcp_telemetry")
     end

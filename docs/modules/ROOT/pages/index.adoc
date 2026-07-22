@@ -1,0 +1,7 @@
+= PhoenixMcp SDK
+
+PhoenixMcp is a modular C++20 SDK for implementing MCP servers, MCP clients,
+and multi-server MCP hosts.
+
+See xref:architecture/index.adoc[SDK architecture] for the target design and
+the phased migration from the current server-only implementation.

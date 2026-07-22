@@ -1,0 +1,257 @@
+= PhoenixMcp Epic 0–1 Implementation Plan
+:toc:
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> `superpowers:subagent-driven-development` (recommended) or
+> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Establish the public C++ SDK layout and make a hand-maintained CMake
+build the authoritative build, while retaining Xmake as a supported secondary
+frontend.
+
+**Architecture:** Public headers are installed only from
+`include/phoenix_mcp`; private headers remain adjacent to their `.cc` files in
+`src/phoenix_mcp`. CMake owns target topology, options, dependency resolution,
+install/export rules, packaging, and CI; Xmake mirrors supported targets and is
+verified by Linux smoke jobs.
+
+**Tech Stack:** C++20, CMake 3.28+, Ninja, vcpkg manifest mode, CTest, CPack,
+GoogleTest/GoogleMock, Folly, reflect-cpp, Xmake, and `rtk` for all commands.
+
+== Global constraints
+
+* Use `rtk` for every shell command and `rtk git` for Git inspection.
+* `CMakeLists.txt` is hand-maintained; never regenerate it from Xmake.
+* Use `.h` and `.cc`, lowercase `snake_case` filenames, Google include order,
+  path-derived include guards, and `namespace phoenix_mcp`.
+* Preserve `pxm` as a deprecated transition alias; do not remove existing
+  server functionality during the foundation work.
+* CMake has a floor of 3.28, uses C++20, Ninja presets, vcpkg manifest mode,
+  CTest, and CPack.
+* A stdio-only configuration must not require Drogon, Crow, OpenSSL, Brotli,
+  c-ares, or HTTP-server dependencies.
+* Public targets are `PhoenixMcp::Core`, `::Protocol`, `::Server`, `::Client`,
+  `::Host`, `::TransportStdio`, `::TransportHttp`, `::TransportDrogon`,
+  `::TransportCrow`, `::Telemetry`, and `::Testing`.
+
+== File map
+
+* Create `cmake/PhoenixMcpOptions.cmake` for all public feature options.
+* Create `cmake/PhoenixMcpDependencies.cmake` for vcpkg package discovery.
+* Create `cmake/PhoenixMcpWarnings.cmake` and
+  `cmake/PhoenixMcpSanitizers.cmake` for compiler policy.
+* Create `cmake/PhoenixMcpConfig.cmake.in` for downstream `find_package`.
+* Replace `CMakeLists.txt` with the authoritative target, install, export, and
+  CTest entry point.
+* Create `CMakePresets.json`, `vcpkg.json`, and `VERSION`.
+* Move/introduce public headers under `include/phoenix_mcp`; keep private
+  headers in `src/phoenix_mcp/<component>`.
+* Create mirrored test folders below `tests/phoenix_mcp`.
+* Update `xmake.lua`, `src/phoenix_mcp/xmake.lua`, READMEs, `AGENTS.md`, and
+  Antora architecture/build/style pages.
+
+== Tasks
+
+=== Task 1: Record repository, API, and style rules
+
+*Files:*
+
+* Modify `AGENTS.md`.
+* Modify `docs/modules/ROOT/pages/architecture/index.adoc`.
+* Create `docs/modules/ROOT/pages/architecture/code-style.adoc`.
+* Create `docs/modules/ROOT/pages/architecture/build-systems.adoc`.
+* Modify `docs/modules/ROOT/nav.adoc`.
+
+*Produces:* the canonical `phoenix_mcp` namespace decision, public/private
+header rule, Google-derived naming rules, and the CMake/Xmake responsibility
+matrix.
+
+- [ ] Write the documentation checks as exact assertions: public headers only
+  below `include/phoenix_mcp`, private headers never installed, and CMake is
+  authoritative.
+- [ ] Change `AGENTS.md` to say that CMake is handwritten, commands use `rtk`,
+  C++ sources use `.cc`, and the public namespace is `phoenix_mcp`.
+- [ ] Add code-style examples for `client_session.h`, `client_session.cc`,
+  `client_session_test.cc`, path-derived guards, include order, and the
+  `PascalCase`/`snake_case`/`snake_case_`/`kPascalCase` convention.
+- [ ] Add the CMake versus Xmake support matrix, including the documented
+  exception that Xmake does not provide install/export/CPack.
+- [ ] Run `rtk git diff --check` and inspect all changed documentation.
+- [ ] Commit with `docs: define build and code style rules`.
+
+=== Task 3: Introduce the target source layout and namespace compatibility
+
+*Files:*
+
+* Create `include/phoenix_mcp/{core,protocol,client,server,transport,telemetry}`.
+* Move or wrap current headers from `src/phoenix_mcp` using `.h` filenames.
+* Rename implementation files from `.cpp` to `.cc` as they are migrated.
+* Create `include/phoenix_mcp/compat/pxm.h` for the deprecated namespace shim.
+* Test `tests/phoenix_mcp/server/public_headers_test.cc`.
+
+*Consumes:* Task 1 naming and compatibility policy and Task 2 CMake test
+infrastructure.
+*Produces:* self-contained public headers in `namespace phoenix_mcp` and an
+explicit, temporary `pxm` compatibility include.
+
+- [ ] Write `public_headers_test.cc` to compile each installed public header
+  independently and include both `phoenix_mcp/server/server.h` and
+  `phoenix_mcp/compat/pxm.h`.
+- [ ] Run the test target and confirm it fails because the public include tree
+  does not yet exist.
+- [ ] Create forwarding or migrated public declarations with path-derived guards
+  such as `PHOENIX_MCP_SERVER_SERVER_H_`; move implementation-only declarations
+  to `src/phoenix_mcp/<component>`.
+- [ ] Implement the `pxm` alias only in the compatibility header and mark it
+  deprecated with a replacement message naming `phoenix_mcp`.
+- [ ] Build the public-header test and existing server examples through CMake
+  and Xmake.
+- [ ] Commit with `refactor: establish public SDK header layout`.
+
+=== Task 2: Create the authoritative CMake foundation
+
+*Files:*
+
+* Replace `CMakeLists.txt`.
+* Create `vcpkg.json`.
+* Create `cmake/PhoenixMcpOptions.cmake`.
+* Create `cmake/PhoenixMcpDependencies.cmake`.
+* Create `cmake/PhoenixMcpWarnings.cmake`.
+* Create `cmake/PhoenixMcpSanitizers.cmake`.
+* Create `VERSION`.
+
+*Consumes:* Task 1 repository and build-system rules plus the existing source
+layout. Public-header migration follows in Task 3.
+*Produces:* component targets, feature options, C++20 enforcement, warnings,
+sanitizer controls, CTest enablement, and CPack configuration.
+
+- [ ] Add a configure-time CMake test that checks the project requires
+  `cmake_minimum_required(VERSION 3.28)` and exports C++20 target features.
+- [ ] Run `rtk run 'cmake --preset linux-debug'`; expect configuration to fail
+  before presets and targets are added.
+- [ ] Define all eleven `PHOENIX_MCP_*` options with documented defaults:
+  tests/examples on for developers, benchmarks off, shared off, stdio on, and
+  all HTTP/telemetry/sanitizer/static-analysis options off.
+- [ ] Define the `PhoenixMcp::*` targets. Use `INTERFACE` targets where a
+  concrete implementation is not available yet, but preserve the dependency
+  graph and do not link HTTP dependencies unless their feature is enabled.
+- [ ] Add warning and sanitizer helpers guarded by compiler and option; add
+  `include(CTest)` and `include(CPack)`.
+- [ ] Configure and build the debug preset; verify `rtk run 'ctest --preset
+  linux-debug'` discovers and runs the foundation tests.
+- [ ] Commit with `build: add authoritative CMake foundation`.
+
+=== Task 4: Add vcpkg, dependency gating, presets, and package export
+
+*Files:*
+
+* Create `vcpkg.json`.
+* Create `CMakePresets.json`.
+* Create `cmake/PhoenixMcpConfig.cmake.in`.
+* Modify `CMakeLists.txt`.
+* Create `tests/phoenix_mcp/integration/package_consumer/CMakeLists.txt`.
+
+*Consumes:* Task 2 targets and options.
+*Produces:* all requested presets, installation, exported targets, and
+downstream package verification.
+
+- [ ] Add a package-consumer CMake project that calls
+  `find_package(PhoenixMcp CONFIG REQUIRED)` and links
+  `PhoenixMcp::Server` plus `PhoenixMcp::TransportStdio`.
+- [ ] Export dependency discovery via `find_dependency` in the package config
+  file, matching the feature gates established by Task 2.
+- [ ] Add `linux-debug`, `linux-release`, `linux-minimal`,
+  `linux-all-features`, `linux-asan`, `linux-tsan`, `linux-ubsan`,
+  `clang-debug`, `gcc-debug`, `windows-msvc`, and `macos-clang` configure,
+  build, and test presets.
+- [ ] Install headers, targets, and config/version files; run `cmake --install`
+  into a staging prefix and configure/build the package-consumer project using
+  only that prefix.
+- [ ] Configure `linux-minimal` and assert no HTTP backend is discovered.
+- [ ] Commit with `build: export PhoenixMcp CMake package`.
+
+=== Task 5: Mirror supported targets in Xmake
+
+*Files:*
+
+* Modify `xmake.lua`.
+* Modify `src/phoenix_mcp/xmake.lua`.
+* Modify example target declarations.
+
+*Consumes:* CMake target names, sources, and feature decisions from Tasks 2 and
+4.
+*Produces:* supported Xmake targets `phoenix_mcp_core`,
+`phoenix_mcp_protocol`, `phoenix_mcp_server`, `phoenix_mcp_client`, and
+`phoenix_mcp_transport_stdio`, plus examples and unit tests.
+
+- [ ] Add an Xmake configure/build smoke script that expects the Core, Protocol,
+  Server, Client, and stdio targets to be named exactly as documented.
+- [ ] Run the script and confirm it fails against the monolithic target layout.
+- [ ] Split Xmake targets to mirror the CMake dependency graph; keep HTTP
+  adapters optional and document an unavailable optional backend instead of
+  silently omitting a required target.
+- [ ] Add the existing stdio and typed-tool examples to the mirrored targets.
+- [ ] Run `rtk run 'xmake f -m debug && xmake'` and the Xmake test target.
+- [ ] Commit with `build: mirror core targets in Xmake`.
+
+=== Task 6: Establish CTest and GoogleTest foundation
+
+*Files:*
+
+* Create `tests/CMakeLists.txt`.
+* Create `tests/phoenix_mcp/protocol/json_rpc_message_test.cc`.
+* Create `tests/phoenix_mcp/core/error_test.cc`.
+* Modify root `CMakeLists.txt`.
+* Modify `vcpkg.json`.
+
+*Consumes:* Task 2 testing hooks and Task 4 test dependency feature.
+*Produces:* CTest-discoverable GoogleTest targets and initial protocol/error
+coverage.
+
+- [ ] Write a failing JSON-RPC parsing test for a request, notification, and
+  error response, and a failing `McpError` category serialization test.
+- [ ] Run `rtk run 'ctest --preset linux-debug --output-on-failure'` and verify
+  the tests fail before implementation is supplied.
+- [ ] Add the minimal codec/error implementation required by the tests without
+  coupling it to HTTP or server dispatch.
+- [ ] Register tests with `gtest_discover_tests`; run the debug test preset and
+  then `linux-asan` and `linux-ubsan`.
+- [ ] Commit with `test: add CTest protocol foundation`.
+
+=== Task 7: Add CI and developer documentation
+
+*Files:*
+
+* Create `.github/workflows/ci.yml`.
+* Modify `README.adoc` and `README_RU.adoc`.
+* Modify `docs/modules/ROOT/pages/architecture/build-systems.adoc`.
+
+*Consumes:* presets and support matrix from Tasks 2 and 4–6.
+*Produces:* CMake-first CI matrix, Xmake Linux smoke jobs, and current build
+instructions in English and Russian.
+
+- [ ] Add CI jobs for GCC, Clang, minimal, all-features, MSVC, AppleClang,
+  ASan, TSan, and UBSan; each uses the matching CMake preset.
+- [ ] Add Xmake Linux debug and test smoke jobs; do not make Xmake responsible
+  for package export or release packaging.
+- [ ] Replace generated-CMake and Xmake-only instructions in both READMEs with
+  CMake-first examples, then a clearly labelled Xmake secondary workflow.
+- [ ] Run `rtk run 'cmake --preset linux-debug && cmake --build --preset
+  linux-debug && ctest --preset linux-debug'` and the documented Xmake smoke
+  commands.
+- [ ] Commit with `ci: make CMake the primary build`.
+
+== Plan self-review
+
+*Coverage:* Tasks 1 and 3 implement Epic 0 repository/API rules; Tasks 2 and
+4–7 cover
+the authoritative CMake build, manifest dependencies, presets, install/export,
+CTest, Xmake parity, CI, and documentation required by Epic 1.
+
+*Consistency:* Every task uses the same `phoenix_mcp` namespace, public include
+root, target names, C++20/CMake 3.28 floors, and `rtk` command rule.
+
+*Scope:* MCP Client, Streamable HTTP correctness, conformance, resources, and
+prompts are intentionally excluded; they are later epics that consume this
+foundation.

@@ -7,12 +7,17 @@
 #include <iostream>
 #include <utility>
 
-namespace pxm::server {
+#include "../constants/constants.hpp"
+
+namespace phoenix_mcp::server {
+
+namespace cnt = phoenix_mcp::constants;
 
 Server::Server(std::string name, std::string version,
                std::unique_ptr<AbstractTransport> transport,
                std::unique_ptr<tool::ToolRegistry> tool_registry,
-               std::string instruction) : transport_(std::move(transport)) {
+               std::string instruction)
+    : transport_(std::move(transport)) {
   spdlog::info("Server::Server| Server created");
   server_info_ = {
       .name = std::move(name),
@@ -21,14 +26,13 @@ Server::Server(std::string name, std::string version,
 
   // Now we support only tools. Without change event system
   server_capabilities_ = {
-      .tools = msg::types::ToolsCapabilities{.list_changed = false}
-  };
+      .tools = msg::types::ToolsCapabilities{.list_changed = false}};
 
   instruction_ = std::move(instruction);
 
   request_handler_ = std::make_unique<McpRequestHandler>(
-      server_capabilities_, server_info_, instruction_, std::move(tool_registry));
-
+      server_capabilities_, server_info_, instruction_,
+      std::move(tool_registry));
 }
 
 int Server::start_server() {
@@ -50,7 +54,6 @@ void Server::change_tool_registry(
   // TODO: Add custom logic for make event to client
 }
 
-
 void Server::start_server_() {
   while (true) {
     std::string json = transport_->read_msg();
@@ -69,4 +72,4 @@ void Server::start_server_() {
     }
   }
 }
-}
+}  // namespace phoenix_mcp::server

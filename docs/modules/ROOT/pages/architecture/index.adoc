@@ -1,0 +1,306 @@
+= PhoenixMcp SDK architecture
+:description: Target architecture and phased migration for the PhoenixMcp C++20 SDK.
+:toc:
+:sectnums:
+
+This document defines the target architecture for PhoenixMcp 1.0 and the
+incremental migration from the current server-only implementation. It is the
+canonical architecture document for the project; all documentation is
+published through the single Antora `ROOT` module under `docs/modules/ROOT`.
+
+== Goals and non-goals
+
+PhoenixMcp is a modular C++20 SDK for two equal use cases:
+
+* implementing MCP servers with typed tools, resources, prompts, and protocol
+  capabilities; and
+* implementing MCP clients and a multi-server host for a coding-agent runtime.
+
+The SDK supports stdio and Streamable HTTP. It does not implement a process
+supervisor, HTTP stack, event loop, OAuth provider, distributed gateway, or
+control plane. Those responsibilities remain in the embedding application or
+in framework adapters.
+
+== Module graph
+
+[mermaid]
+....
+flowchart LR
+  subgraph foundation["Foundation"]
+    Core["PhoenixMcp::Core"]
+    Protocol["PhoenixMcp::Protocol"]
+    Protocol --> Core
+  end
+
+  subgraph sdk["SDK"]
+    Server["PhoenixMcp::Server"]
+    Client["PhoenixMcp::Client"]
+    Host["PhoenixMcp::Host"]
+    Server --> Protocol
+    Client --> Protocol
+    Host --> Client
+  end
+
+  subgraph adapters["Optional adapters"]
+    Stdio["PhoenixMcp::TransportStdio"]
+    Http["PhoenixMcp::TransportHttp"]
+    Drogon["PhoenixMcp::TransportDrogon"]
+    Crow["PhoenixMcp::TransportCrow"]
+    Stdio --> Core
+    Http --> Core
+    Drogon --> Http
+    Crow --> Http
+  end
+
+  Telemetry["PhoenixMcp::Telemetry"] --> Core
+  Testing["PhoenixMcp::Testing"] --> Core
+....
+
+The arrows are compile-time dependencies. Concrete transports are injected at
+runtime and do not make `Server` or `Client` depend on a particular HTTP
+framework. The graph is acyclic.
+
+=== Core
+
+`PhoenixMcp::Core` is the framework-neutral foundation. It provides
+`rfl::Generic` for dynamic JSON values, `McpError`, the common result aliases,
+runtime limits, cancellation/deadline context, lifecycle primitives, and the
+transport delivery contracts. It has no dependency on MCP capabilities, HTTP
+frameworks, or OpenTelemetry.
+
+Folly and reflect-cpp are intentional public dependencies. Fallible asynchronous
+operations use this single contract:
+
+[source,cpp]
+----
+folly::coro::Task<folly::Expected<T, McpError>>
+----
+
+`Runtime` is an explicit dependency of `Server`, `Client`, and `Host`. It owns
+`folly::Executor::KeepAlive<>` handles for IO and CPU execution. The SDK offers
+a convenience default runtime, but it never assumes ownership of the embedding
+application's event loop.
+
+=== Protocol
+
+`PhoenixMcp::Protocol` contains the JSON-RPC codec, a canonical MCP model, and
+version-specific dialect adapters. JSON-RPC parsing and serialization are
+separate from MCP method decoding and from session dispatch.
+
+[mermaid]
+....
+flowchart LR
+  Raw["Raw transport envelope"] --> JsonRpc["JsonRpcCodec"]
+  JsonRpc --> Dialect["ProtocolDialect"]
+  Dialect --> Session["ClientSession / ServerSession"]
+  Session --> Capability["Tools / Resources / Prompts / Notifications"]
+....
+
+[source,cpp]
+----
+class ProtocolDialect {
+ public:
+  virtual ProtocolVersion version() const = 0;
+  virtual folly::Expected<Message, McpError> decode(
+      const rfl::Generic& value) const = 0;
+  virtual folly::Expected<rfl::Generic, McpError> encode(
+      const Message& message) const = 0;
+  virtual CapabilityRules capability_rules() const = 0;
+};
+----
+
+The initial supported dialects are `2025-06-18` for legacy interoperability and
+`2025-11-25` as the stable baseline. A `2026-07-28` dialect is added only after
+the specification is final and has its own conformance baseline. Generated wire
+types remain implementation details; ergonomic public C++ types and handlers
+are written and versioned deliberately.
+
+=== Server, client, and host
+
+`Server` owns server capabilities and a `SessionManager`. Every stdio connection
+receives one isolated `ServerSession`; every Streamable HTTP MCP session ID maps
+to one isolated `ServerSession`. No global MCP session exists. The manager has
+maximum-session and expiration limits and performs deterministic cleanup.
+
+`Client` owns `ClientSession`, request-ID generation, pending-request
+correlation, server notifications, server-to-client requests, reconnect policy,
+and close semantics.
+
+`Host` manages multiple clients and publishes discovered tools, resources, and
+prompts under qualified names such as `github.create_issue`. It is not a process
+supervisor or policy engine. Before routing a remote tool call, it invokes an
+optional `IToolCallInterceptor`; an embedding coding-agent can use this seam for
+approval, audit, budget enforcement, secret filtering, or argument rewriting.
+
+== Lifecycle and concurrency
+
+[mermaid]
+....
+stateDiagram-v2
+  [*] --> Configured
+  Configured --> Connecting
+  Connecting --> Initializing: transport connected
+  Connecting --> Reconnecting: retryable transport error
+  Initializing --> Ready: initialize accepted
+  Initializing --> Failed: protocol or authentication failure
+  Ready --> Degraded: transient transport error
+  Degraded --> Reconnecting: retry enabled
+  Reconnecting --> Initializing: connected
+  Ready --> Stopping: close or shutdown
+  Degraded --> Stopping: close or shutdown
+  Failed --> Stopping: explicit shutdown
+  Stopping --> Stopped: pending operations settled
+  Stopped --> [*]
+....
+
+Session state is isolated per connection. A `ClientSession` owns pending
+requests; a `ServerSession` owns initialize state, active requests, capabilities,
+and notifications. All queues are bounded. `close()` is idempotent.
+
+Cancellation is cooperative. Each request has a `folly::CancellationSource`;
+remote cancellation, a deadline, disconnect, or shutdown requests cancellation
+through the token passed to tool, resource, and prompt handlers. The SDK settles
+protocol state after a bounded grace period but never forcefully terminates a
+C++ thread.
+
+== Transport seams
+
+The transport contract belongs to `Core` and carries bounded delivery envelopes
+and transport-specific failures only. It does not know MCP method names, tools,
+resources, or prompts.
+
+`TransportStdio` accepts an already-open `StdioChannel` and does not spawn a
+child process. The embedding process supervisor owns spawning, sandboxing,
+environment, restart policy, and stderr.
+
+`TransportHttp` defines Streamable HTTP behavior. `TransportDrogon` is the
+supported primary server adapter; `TransportCrow` is an optional compatibility
+adapter. Neither exposes Drogon or Crow types through public headers. Both must
+pass the same transport contract suite.
+
+== Errors, security, and observability
+
+`McpError` provides a category, machine-readable `std::error_code`, message,
+optional `rfl::Generic` data, and optional root cause. Transport, protocol,
+serialization, validation, authentication, authorization, timeout,
+cancellation, lifecycle, tool, and internal errors have distinct categories.
+Exceptions do not cross public SDK boundaries.
+
+An expected tool business or execution failure is encoded as an MCP
+`CallToolResult` with `isError: true`; it is not promoted to a JSON-RPC internal
+error. Protocol, transport, lifecycle, and serialization failures use
+`McpError`.
+
+Authentication and security are adapters rather than HTTP-framework features:
+
+* server side: `IRequestAuthenticator`, Origin and host validation, request
+  limits, and rate-limit hooks;
+* client side: `ICredentialProvider`, TLS/custom CA/proxy policy, and
+  origin-aware redirect behavior; and
+* all transports: bounded queues, message/connection/session limits, deadlines,
+  and mandatory redaction of credentials.
+
+Telemetry is an optional module. When enabled it emits OpenTelemetry spans and
+metrics for operations and transport activity, but it redacts authorization
+headers, prompts, tool arguments, resources, and other payloads by default.
+Recording payloads requires an explicit opt-in.
+
+== Public API and compatibility
+
+Installed public headers live exclusively under `include/phoenix_mcp/`.
+Implementation details and generated protocol wire types are not installed.
+Public declarations use `namespace phoenix_mcp`. During the migration, the
+explicit compatibility header provides `pxm` as a deprecated transition alias;
+new public declarations must not use `pxm`. Private headers remain under
+`src/phoenix_mcp/`, next to the implementation that uses them, and are never
+installed.
+
+The project coding and build rules are defined in
+xref:architecture/code-style.adoc[Code style] and
+xref:architecture/build-systems.adoc[Build systems].
+
+The exported CMake targets are:
+
+----
+PhoenixMcp::Core
+PhoenixMcp::Protocol
+PhoenixMcp::Server
+PhoenixMcp::Client
+PhoenixMcp::Host
+PhoenixMcp::TransportStdio
+PhoenixMcp::TransportHttp
+PhoenixMcp::TransportDrogon
+PhoenixMcp::TransportCrow
+PhoenixMcp::Telemetry
+PhoenixMcp::Testing
+----
+
+CMake target names and header paths use the PhoenixMcp brand. When a concrete
+class or method must be replaced, that symbol—not the whole namespace—is
+deprecated for at least one minor release and the migration guide names its
+replacement. Until 1.0, protocol compatibility does not imply binary
+compatibility; after 1.0, public API changes follow Semantic Versioning.
+
+== Verification architecture
+
+[mermaid]
+....
+flowchart TB
+  Unit["Unit: Core, JSON-RPC, protocol, state machines"] --> CTest
+  Golden["Golden protocol: JSON to C++ to JSON"] --> CTest
+  Contract["Transport contract: in-memory and fault injection"] --> CTest
+  Integration["Integration: stdio, HTTP, multi-session"] --> CTest
+  Conformance["Official MCP conformance: client and server"] --> CI
+  Fuzz["Fuzz: parsers, dispatcher, headers, SSE"] --> CI
+  Sanitizers["ASan, UBSan, TSan"] --> CI
+....
+
+`PhoenixMcp::Testing` supplies an in-memory duplex transport, deterministic test
+runtime, fixtures, and programmable fault injection. Examples remain buildable
+documentation but are never the primary correctness mechanism.
+
+== Migration stages
+
+. *Foundation (`0.2.0`):* CMake, exported targets, CTest, package validation,
+  test foundation, and sanitizer jobs while retaining current server behavior.
+. *Protocol and server (`0.3.0`–`0.4.0`):* canonical protocol model, dialect
+  negotiation, sessions, transport contract, Streamable HTTP, and server
+  conformance.
+. *Client and host (`0.5.0`–`0.6.0`):* client session, stdio and HTTP clients,
+  pending requests, cancellation, multi-server host, and policy interceptor.
+. *SDK completeness (`0.7.0`–`0.8.0`):* resources, prompts, notifications,
+  progress, authentication hooks, and extended telemetry.
+. *Stabilization (`0.9.0`–`1.0.0`):* fuzzing, fault injection, performance and
+  cross-platform baselines, documentation, API freeze, and conformance Tier 2
+  readiness.
+
+Each phase preserves the module graph: protocol changes add a dialect adapter,
+and backend changes add a transport adapter. Neither rewrites Core for a
+specific HTTP framework or MCP protocol version.
+
+== Documentation layout
+
+All project documentation is an Antora component rooted at `docs/`.
+
+----
+docs/
+├── antora.yml
+└── modules/
+    └── ROOT/
+        ├── nav.adoc
+        └── pages/
+            ├── index.adoc
+            ├── getting-started/
+            ├── architecture/
+            ├── server/
+            ├── client/
+            ├── host/
+            ├── protocol/
+            ├── security/
+            ├── observability/
+            └── migration/
+----
+
+All pages, including Mermaid diagrams, live below `modules/ROOT/pages` in
+topic-specific directories. The architecture page is
+`modules/ROOT/pages/architecture/index.adoc`.

@@ -5,12 +5,11 @@
 #include "stdio_transport.h"
 
 #include <folly/coro/BlockingWait.h>
-
-#include <iostream>
 #include <spdlog/spdlog.h>
 
+#include <iostream>
 
-namespace pxm::server {
+namespace phoenix_mcp::server {
 int StdioTransport::run(Handler on_message) {
   std::string line;
   while (true) {
@@ -26,7 +25,8 @@ int StdioTransport::run(Handler on_message) {
 
     ITransport::RequestEnvelope request;
     request.body = std::move(line);
-    const auto response = folly::coro::blockingWait(on_message(std::move(request)));
+    const auto response =
+        folly::coro::blockingWait(on_message(std::move(request)));
     if (!response.has_value()) {
       continue;
     }
@@ -41,4 +41,4 @@ int StdioTransport::run(Handler on_message) {
     line.clear();
   }
 }
-} // namespace pxm::server
+}  // namespace phoenix_mcp::server
