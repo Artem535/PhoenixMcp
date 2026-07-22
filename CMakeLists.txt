@@ -56,7 +56,9 @@ endif()
 add_library(phoenix_mcp_implementation ${PHOENIX_MCP_LIBRARY_TYPE}
             ${phoenix_mcp_sources})
 target_include_directories(phoenix_mcp_implementation
-  PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_definitions(phoenix_mcp_implementation
   PRIVATE GLOG_USE_GLOG_EXPORT
@@ -85,6 +87,15 @@ phoenix_mcp_enable_sanitizers(phoenix_mcp_implementation)
 function(phoenix_mcp_add_module name)
   add_library(phoenix_mcp_${name} INTERFACE)
   add_library(PhoenixMcp::${name} ALIAS phoenix_mcp_${name})
+  target_include_directories(phoenix_mcp_${name}
+    INTERFACE
+      "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+      "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+
+  # Mark for export so downstream find_package sees the target.
+  set_property(TARGET phoenix_mcp_${name} PROPERTY EXPORT_NAME ${name})
+  list(APPEND PHOENIX_MCP_EXPORT_TARGETS phoenix_mcp_${name})
+  set(PHOENIX_MCP_EXPORT_TARGETS "${PHOENIX_MCP_EXPORT_TARGETS}" PARENT_SCOPE)
 endfunction()
 
 phoenix_mcp_add_module(Core)
@@ -137,11 +148,66 @@ if(PHOENIX_MCP_BUILD_EXAMPLES)
   endif()
 endif()
 
+# ---------------------------------------------------------------------------
+# Install / export
+# ---------------------------------------------------------------------------
+include(GNUInstallDirs)
+
+install(DIRECTORY include/phoenix_mcp
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+  FILES_MATCHING PATTERN "*.h")
+
+install(TARGETS phoenix_mcp_implementation ${PHOENIX_MCP_EXPORT_TARGETS}
+  EXPORT PhoenixMcpTargets
+  ARCHIVE  DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  LIBRARY  DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  RUNTIME  DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+install(EXPORT PhoenixMcpTargets
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PhoenixMcp"
+  NAMESPACE PhoenixMcp::)
+
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PhoenixMcpConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/PhoenixMcpConfig.cmake"
+  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PhoenixMcp"
+  PATH_VARS CMAKE_INSTALL_INCLUDEDIR)
+
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/PhoenixMcpConfigVersion.cmake"
+  VERSION ${PHOENIX_MCP_VERSION}
+  COMPATIBILITY SameMajorVersion)
+
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/PhoenixMcpConfig.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/PhoenixMcpConfigVersion.cmake"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PhoenixMcp")
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
 if(BUILD_TESTING)
-  add_executable(phoenix_mcp_public_headers_test
+  include(GoogleTest)
+
+add_executable(phoenix_mcp_public_headers_test
     tests/phoenix_mcp/server/public_headers_test.cc)
   target_link_libraries(phoenix_mcp_public_headers_test
     PRIVATE PhoenixMcp::Server PhoenixMcp::TransportStdio)
+
+  add_executable(phoenix_mcp_json_rpc_message_test
+    tests/phoenix_mcp/protocol/json_rpc_message_test.cc)
+  target_link_libraries(phoenix_mcp_json_rpc_message_test
+    PRIVATE PhoenixMcp::Protocol GTest::gtest_main)
+
+  add_executable(phoenix_mcp_error_test
+    tests/phoenix_mcp/core/error_test.cc)
+  target_link_libraries(phoenix_mcp_error_test
+    PRIVATE PhoenixMcp::Protocol GTest::gtest_main)
+
+  gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
+  gtest_discover_tests(phoenix_mcp_error_test)
 
   add_test(
     NAME phoenix_mcp_public_headers
@@ -152,4 +218,12 @@ if(BUILD_TESTING)
     COMMAND ${CMAKE_COMMAND}
       -DPHOENIX_MCP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests/verify_manual_authority.cmake)
+
+  add_test(
+    NAME phoenix_mcp_package_consumer
+    COMMAND ${CMAKE_COMMAND}
+      -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+      -DBUILD_DIR=${CMAKE_BINARY_DIR}
+      -DINSTALL_PREFIX=${CMAKE_BINARY_DIR}/install
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests/verify_package_consumer.cmake)
 endif()

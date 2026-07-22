@@ -36,7 +36,7 @@
     "tests": {
       "description": "Enable test-only dependencies.",
       "dependencies": [
-        "catch2"
+        "gtest"
       ]
     }
   }

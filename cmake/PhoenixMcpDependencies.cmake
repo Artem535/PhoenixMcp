@@ -25,3 +25,7 @@ if(PHOENIX_MCP_ENABLE_OTEL)
   find_package(opentelemetry-cpp CONFIG REQUIRED)
   set(PHOENIX_MCP_OTEL_DEPENDENCIES opentelemetry-cpp::api)
 endif()
+
+if(BUILD_TESTING)
+  find_package(GTest CONFIG REQUIRED)
+endif()

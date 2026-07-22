@@ -1,0 +1,37 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(reflectcpp CONFIG)
+find_dependency(folly CONFIG)
+find_dependency(spdlog CONFIG)
+
+set_and_check(PHOENIX_MCP_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+
+if(PHOENIX_MCP_ENABLE_HTTP_CLIENT)
+  find_dependency(OpenSSL CONFIG)
+endif()
+
+if(PHOENIX_MCP_ENABLE_DROGON)
+  find_dependency(Drogon CONFIG)
+endif()
+
+if(PHOENIX_MCP_ENABLE_CROW)
+  find_dependency(Crow CONFIG)
+endif()
+
+if(PHOENIX_MCP_ENABLE_OTEL)
+  find_dependency(opentelemetry-cpp CONFIG)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/PhoenixMcpTargets.cmake")
+
+foreach(_module Core Protocol Server Client Host
+                TransportStdio TransportHttp TransportDrogon TransportCrow
+                Telemetry Testing)
+  if(TARGET PhoenixMcp::${_module})
+    set(PhoenixMcp_${_module}_FOUND TRUE)
+  endif()
+endforeach()
+
+set(PhoenixMcp_FOUND TRUE)
