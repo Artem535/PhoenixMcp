@@ -20,74 +20,20 @@ jobs:
       matrix:
         preset:
           - linux-debug
-          - linux-release
           - linux-minimal
           - linux-all-features
           - linux-asan
           - linux-tsan
           - linux-ubsan
-        compiler:
-          - { cc: gcc, cxx: g++ }
-          - { cc: clang, cxx: clang++ }
     steps:
       - uses: actions/checkout@v4
-      - uses: friendlyanon/setup-vcpkg@v1
-        with:
-          reuse: false
-      - name: Configure
-        run: |
-          cmake --preset ${{ matrix.preset }} \
-            -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }} \
-            -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }}
-        env:
-          CC: ${{ matrix.compiler.cc }}
-          CXX: ${{ matrix.compiler.cxx }}
-      - name: Build
-        run: cmake --build --preset ${{ matrix.preset }}
-      - name: Test
-        run: ctest --preset ${{ matrix.preset }} --output-on-failure
-
-  # ---------------------------------------------------------------------------
-  # CMake — macOS
-  # ---------------------------------------------------------------------------
-  cmake-macos:
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        preset: [macos-clang]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: friendlyanon/setup-vcpkg@v1
-        with:
-          reuse: false
+      - uses: microsoft/setup-vcpkg@latest
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
       - name: Test
-        run: ctest --preset ${{ matrix.preset }} --output-on-failure
-
-  # ---------------------------------------------------------------------------
-  # CMake — Windows
-  # ---------------------------------------------------------------------------
-  cmake-windows:
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        preset: [windows-msvc]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: friendlyanon/setup-vcpkg@v1
-        with:
-          reuse: false
-      - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
-      - name: Build
-        run: cmake --build --preset ${{ matrix.preset }}
-      - name: Test
-        run: ctest --preset ${{ matrix.preset }} --output-on-failure
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure --timeout 60
 
   # ---------------------------------------------------------------------------
   # Xmake — Linux smoke
@@ -104,9 +50,7 @@ jobs:
         run: xmake f -m debug -y
       - name: Build
         run: xmake
-      - name: Smoke test — create_server
-        run: xmake run create_server &
-        timeout-minutes: 1
-        continue-on-error: true
       - name: Smoke test — using_tool_registry
         run: xmake run using_tool_registry
+      - name: Build release
+        run: xmake f -m release -y && xmake

@@ -1,0 +1,3499 @@
+Directory structure:
+└── PhoenixMcp/
+    ├── README.adoc
+    ├── LICENSE
+    ├── README_RU.adoc
+    ├── xmake.lua
+    ├── .clang-format
+    ├── .clang-tidy
+    ├── examples/
+    │   ├── create_server/
+    │   │   └── main.cpp
+    │   ├── create_server_http/
+    │   │   ├── benchmark.sh
+    │   │   ├── main.cpp
+    │   │   └── smoke_test.sh
+    │   └── using_tool_registry/
+    │       └── main.cpp
+    └── src/
+        ├── main.cpp
+        └── phoenix_mcp/
+            ├── xmake.lua
+            ├── constants/
+            │   └── constants.hpp
+            ├── runtime/
+            │   ├── runtime.cpp
+            │   └── runtime.h
+            ├── server/
+            │   ├── mcp_request_handler.cpp
+            │   ├── mcp_request_handler.h
+            │   ├── mcp_server.h
+            │   ├── mcp_session.cpp
+            │   ├── mcp_session.h
+            │   ├── server.cpp
+            │   └── server.h
+            ├── tool_registry/
+            │   ├── tool_registry.cpp
+            │   ├── tool_registry.h
+            │   └── utils.hpp
+            ├── transport/
+            │   ├── abstract_transport.h
+            │   ├── crow_transport.cpp
+            │   ├── crow_transport.h
+            │   ├── drogon_transport.cpp
+            │   ├── drogon_transport.h
+            │   ├── i_transport.h
+            │   ├── stdio_transport.cpp
+            │   └── stdio_transport.h
+            └── types/
+                └── msg_types.hpp
+
+================================================
+FILE: README.adoc
+================================================
+= PhoenixMCP
+:toc: auto
+:toclevels: 3
+:source-highlighter: rouge
+:icons: font
+
+WARNING: 🚧 Beta Version — Under Active Development
+
+
+== Description
+
+PhoenixMCP is a modern implementation of a Model Context Protocol (MCP) server in C++20. The project provides a type-safe framework for creating MCP servers that integrate with LLM clients (Claude Desktop and others) through a standardized interaction protocol.
+
+The main goal is to simplify the creation of tool servers for AI assistants by providing automatic serialization, JSON schema generation, and session lifecycle management.
+
+== Features
+
+* **Complete MCP implementation** — compliance with JSON-RPC 2.0 specification and protocol version 2025-06-18
+* **Type-safe tool registration** — using C++ templates for parameter validation at compile time
+* **Automatic JSON schema generation** — via the reflectcpp library based on data structures
+* **Flexible transport system** — abstract layer, current implementation via stdin/stdout
+* **Lifecycle management** — full implementation of stages: uninitialized → initialized → operation → shutdown
+* **Support for different response formats** — text, JSON objects, images (base64)
+* **Advanced logging** — integration with spdlog with multiple verbosity levels
+* **Industrial-grade code quality** — application of clang-format, clang-tidy, and modern C++20 practices
+
+== Requirements
+
+* Compiler with full C++20 support (GCC 11+, Clang 13+, MSVC 2022+)
+* https://xmake.io[Xmake] 2.8+ — build system
+* https://vcpkg.io[Vcpkg] — package manager (integrated with xmake)
+* Operating system: Linux, macOS, Windows (WSL)
+
+== Installation and Build
+
+=== Cloning
+
+[source,bash]
+----
+git clone <repository-url>
+cd PhoenixMcp
+----
+
+=== Dependencies
+
+Xmake will automatically install required packages via vcpkg:
+- `reflectcpp` — reflection and serialization
+- `yyjson` — fast JSON parser
+- `spdlog` — logging
+
+=== Build
+
+Debug version:
+
+[source,bash]
+----
+xmake f -m debug
+xmake -j$(nproc)
+----
+
+Release version with optimizations:
+
+[source,bash]
+----
+xmake f -m release
+xmake -j$(nproc)
+----
+
+=== Installation Check
+
+[source,bash]
+----
+xmake run create_server --help  # Help output (if implemented)
+----
+
+== Quick Start
+
+Complete example of creating an MCP server with mathematical tools:
+
+[source,cpp]
+----
+#include <rfl/Generic.hpp>
+#include "phoenix_mcp/server/server.h"
+#include "phoenix_mcp/transport/stdio_transport.h"
+#include "phoenix_mcp/tool_registry/tool_registry.h"
+
+// 1. Define parameter structures
+struct AddInput {
+  int a;
+  int b;
+};
+
+struct AddOutput {
+  int sum;
+  std::string description;
+};
+
+// 2. Implement handler
+AddOutput add_tool(const AddInput& input) {
+  return {
+    .sum = input.a + input.b,
+    .description = "Result of addition"
+  };
+}
+
+// 3. Create and run the server
+int main() {
+  // Configure logging
+  auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+  spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+      "mcp_server", spdlog::sinks_init_list{console_sink}
+  ));
+  spdlog::set_level(spdlog::level::debug);
+
+  // Create registry and register tool
+  auto registry = std::make_unique<pxm::tool::ToolRegistry>();
+  registry->register_tool<AddInput, AddOutput>(
+      "add",                                  // tool name
+      "Add two integers and return detailed result",  // description
+      add_tool                               // handler
+  );
+
+  // Configure transport
+  auto transport = std::make_unique<pxm::server::StdioTransport>();
+
+  // Create and run the server
+  pxm::server::Server server{
+      "Math MCP Server",                    // server name
+      "1.0.0",                             // version
+      std::move(transport),                // transport
+      std::move(registry),                 // tool registry
+      "Server provides mathematical operations"  // instruction for AI
+  };
+
+  return server.start_server();
+}
+----
+
+== Detailed Documentation
+
+=== Tool Registration
+
+Two types of handlers are supported:
+
+==== Type 1: Returning CallToolResult (manual serialization)
+
+[source,cpp]
+----
+registry->register_tool<ParseJsonInput>(
+    "parse_json",
+    "Parse and validate JSON string",
+    [](const ParseJsonInput& input) -> pxm::msg::types::CallToolResult {
+        try {
+            auto parsed = rfl::json::read<rfl::Generic>(input.json_string);
+            return pxm::utils::make_text_result("Valid JSON");
+        } catch (const std::exception& e) {
+            return pxm::utils::make_text_result(e.what(), true); // is_error = true
+        }
+    }
+);
+----
+
+==== Type 2: Returning custom type (automatic serialization)
+
+[source,cpp]
+----
+struct DataInput { std::string query; };
+struct DataOutput { std::vector<std::string> matches; bool found; };
+
+registry->register_tool<DataInput, DataOutput>(
+    "search_data",
+    "Search records by query",
+    [](const DataInput& input) -> DataOutput {
+        // Search logic...
+        return {
+            .matches = {"result1", "result2"},
+            .found = true
+        };
+    }
+);
+----
+
+The framework automatically:
+- Generates JSON schema for `DataInput`
+- Serializes `DataOutput` to JSON string
+- Wraps the result in `CallToolResult::TextContent`
+
+=== Return Data Formats
+
+==== Text Result
+
+[source,cpp]
+----
+return pxm::utils::make_text_result("Operation completed successfully");
+----
+
+==== Image Result
+
+[source,cpp]
+----
+std::string base64_image = "...";
+return pxm::utils::make_image_result(base64_image, "image/png");
+----
+
+==== Error Result
+
+[source,cpp]
+----
+return pxm::utils::make_text_result("Invalid input parameters", true);
+----
+
+=== Creating Custom Transport
+
+Implement the `AbstractTransport` interface:
+
+[source,cpp]
+----
+class HttpTransport : public pxm::server::AbstractTransport {
+public:
+    std::string read_msg() override {
+        // Read HTTP request
+        return receive_json_body();
+    }
+
+    void write_msg(const std::string& msg) override {
+        // Send HTTP response
+        send_json_response(msg);
+    }
+};
+----
+
+=== Session Configuration
+
+The server supports initialization timeout (5 seconds by default) and automatic stage transitions throughout the lifecycle.
+
+== Usage Examples
+
+=== Integration with Claude Desktop
+
+Save configuration to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "math-server": {
+      "command": "/absolute/path/to/build/linux/x86_64/release/create_server",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+----
+
+After restarting Claude Desktop, your tools will be available in the interface.
+
+=== Example: REST API Client
+
+Implement a tool for calling external APIs:
+
+[source,cpp]
+----
+struct ApiInput {
+  std::string endpoint;
+  std::map<std::string, std::string> headers;
+};
+
+struct ApiOutput {
+  int status_code;
+  std::string body;
+};
+
+registry->register_tool<ApiInput, ApiOutput>(
+    "call_api",
+    "Make HTTP GET request",
+    [](const ApiInput& input) -> ApiOutput {
+        httplib::Client client("api.example.com");
+        auto res = client.Get(input.endpoint.c_str());
+
+        return {
+            .status_code = res->status,
+            .body = res->body
+        };
+    }
+);
+----
+
+=== Example: File Operations
+
+[source,cpp]
+----
+struct FileReadInput {
+  std::string path;
+};
+
+registry->register_tool<FileReadInput>(
+    "read_file",
+    "Read text file content",
+    [](const FileReadInput& input) -> pxm::msg::types::CallToolResult {
+        std::ifstream file(input.path);
+        if (!file) {
+            return pxm::utils::make_text_result("File not found", true);
+        }
+
+        std::string content((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+
+        return pxm::utils::make_text_result(content);
+    }
+);
+----
+
+== Architecture
+
+```mermaid
+graph TD
+    subgraph "Client"
+        C[Client]
+    end
+
+    subgraph "PhoenixMCP Server"
+        subgraph "Transport Layer"
+            AT[AbstractTransport]
+            ST[StdioTransport]
+        end
+
+        subgraph "Core Server"
+            S[Server]
+            MS[McpSession]
+            TR[ToolRegistry]
+        end
+
+        subgraph "Types"
+            MT[msg_types.hpp]
+        end
+    end
+
+    ST -.->|implements| AT
+    S -->|manages| MS
+    MS -->|uses| TR
+    MT -.->|uses| MS
+
+    C -->|stdin/stdout| ST
+    ST -->|JSON-RPC| MS
+    TR -->|data types| MT
+```
+
+
+=== Session Lifecycle
+
+1. **Uninitialized** → Waiting for `initialize` request
+2. **Initialized** → Initialization received, waiting for `notifications/initialized` notification
+3. **Operation** → Active request processing (`tools/list`, `tools/call`, `ping`)
+4. **Shutdown** → Server termination
+
+== Extensibility
+
+=== Adding New Content Type
+
+Create a structure in `msg_types.hpp` and add it to `VariantContent`:
+
+[source,cpp]
+----
+struct CustomContent {
+  std::string type = "custom";
+  std::string data;
+  std::string mime_type;
+};
+
+// In msg_types.hpp:
+using VariantContent = std::variant<TextContent, ImageContent, EmbeddedResource, CustomContent>;
+----
+
+=== Supporting New MCP Methods
+
+Extend `McpSession::handle_operation`:
+
+[source,cpp]
+----
+if (request.method == "resources/read") {
+    // Implementation for reading resources
+    return make_response(resources_->read(request), request.id);
+}
+----
+
+== Testing
+
+The project includes basic examples that serve as integration tests:
+
+[source,bash]
+----
+# Run test server
+xmake run create_server &
+
+# Send test request (via echo/nc)
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | nc localhost 8080
+----
+
+=== HTTP Async Smoke Test
+
+The `create_server_http` example uses `DrogonTransport` and exposes:
+
+* `sum_tool` — a synchronous tool
+* `delayed_sum_tool` — a coroutine tool registered with `ExecutionPolicy::IoBound`
+
+Run the HTTP server:
+
+[source,bash]
+----
+xmake run create_server_http
+----
+
+Then run the smoke test from another shell:
+
+[source,bash]
+----
+bash examples/create_server_http/smoke_test.sh
+----
+
+If `hey` is installed, the script also sends a small parallel load.
+
+=== HTTP Benchmark
+
+For a quick HTTP benchmark against `DrogonTransport`, run:
+
+[source,bash]
+----
+bash examples/create_server_http/benchmark.sh
+----
+
+Useful environment variables:
+
+* `REQUESTS` — total number of requests for `hey` (default: `100`)
+* `CONCURRENCY` — parallel workers (default: `8`)
+* `DELAY_MS` — artificial delay for `delayed_sum_tool` (default: `1000`)
+
+Example:
+
+[source,bash]
+----
+REQUESTS=200 CONCURRENCY=16 DELAY_MS=250 bash examples/create_server_http/benchmark.sh
+----
+
+== Performance
+
+* Optimized serialization via reflectcpp and yyjson
+* Minimal data copying (using `std::move`)
+* Efficient read/write through stdio
+* Multi-threading support planned (current version is single-threaded)
+
+== Troubleshooting
+
+=== Compilation Errors
+
+* Ensure your compiler supports C++20: `g++ --version`
+* Check Vcpkg availability: `xmake require --info`
+
+=== Logging Issues
+
+If logs are not visible, check the level:
+
+[source,cpp]
+----
+spdlog::set_level(spdlog::level::trace); // Maximum verbosity
+spdlog::flush_on(spdlog::level::trace);
+----
+
+=== Initialization Errors
+
+Server expects a valid JSON-RPC request within 5 seconds. Use:
+
+[source,json]
+----
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",...}}
+----
+
+Then send notification:
+
+[source,json]
+----
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+----
+
+== License
+
+MIT License
+
+== Contributing
+
+1. Fork the repository
+2. Create a branch: `git checkout -b feature/my-feature`
+3. Apply formatting: `clang-format -i src/**/*.cpp src/**/*.hpp`
+4. Check static analysis: `xmake check` (if configured)
+5. Submit PR with change description
+
+== Credits
+
+* reflectcpp — for the powerful reflection system
+* spdlog — for high-performance logging
+* MCP Team — for the protocol specification
+
+== Links
+
+* https://spec.modelcontextprotocol.io[MCP Protocol Specification]
+* https://github.com/getml/reflect-cpp[reflectcpp Documentation]
+* https://github.com/gabime/spdlog[spdlog Documentation]
+* https://xmake.io[Xmake Documentation]
+
+== FAQ
+
+**Q: Can I add HTTP/SSE transport?**
+A: Yes, implement the `AbstractTransport` interface.
+
+**Q: Why use rfl::Generic?**
+A: For flexible work with JSON data without losing type safety.
+
+**Q: How to add authentication?**
+A: In the current implementation — through custom transport. Built-in support is planned.
+
+== Notes
+
+This README file was automatically generated by an AI assistant (Kimi k2) based on analysis of the PhoenixMCP project source code.
+
+
+
+================================================
+FILE: LICENSE
+================================================
+MIT License
+
+Copyright (c) 2025 Artem Durynin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+
+================================================
+FILE: README_RU.adoc
+================================================
+[Binary file]
+
+
+================================================
+FILE: xmake.lua
+================================================
+add_rules("mode.debug", "mode.release")
+
+set_languages("c++20")
+add_defines("GLOG_USE_GLOG_EXPORT")
+
+includes("src/phoenix_mcp/xmake.lua")
+
+add_requires("vcpkg::reflectcpp")
+add_requires("vcpkg::yyjson")
+add_requires("vcpkg::spdlog")
+add_requires("crow")
+add_requires("vcpkg::folly")
+add_requires("vcpkg::glog")
+add_requires("vcpkg::gflags")
+add_requires("vcpkg::boost-context")
+add_requires("vcpkg::libevent")
+add_requires("vcpkg::double-conversion")
+add_requires("vcpkg::drogon")
+add_requires("vcpkg::trantor")
+add_requires("vcpkg::jsoncpp")
+add_requires("vcpkg::openssl")
+add_requires("vcpkg::brotli")
+add_requires("vcpkg::zlib")
+add_requires("vcpkg::libuuid")
+add_requires("vcpkg::c-ares")
+
+target("PhoenixMcp")
+    set_kind("binary")
+    add_deps("phoenix_mcp")
+    add_files("src/*.cpp")
+    add_packages("vcpkg::reflectcpp", "vcpkg::yyjson", "vcpkg::spdlog", "crow", "vcpkg::folly", "vcpkg::glog", "vcpkg::gflags", "vcpkg::boost-context", "vcpkg::libevent", "vcpkg::double-conversion", "vcpkg::drogon", "vcpkg::trantor", "vcpkg::jsoncpp", "vcpkg::openssl", "vcpkg::brotli", "vcpkg::zlib", "vcpkg::libuuid", "vcpkg::c-ares")
+
+target("using_tool_registry")
+    set_kind("binary")
+    add_deps("phoenix_mcp")
+    add_files("examples/using_tool_registry/*.cpp")
+    add_includedirs("src")
+    add_packages("vcpkg::reflectcpp", "vcpkg::yyjson", "vcpkg::spdlog", "crow", "vcpkg::folly", "vcpkg::glog", "vcpkg::gflags", "vcpkg::boost-context", "vcpkg::libevent", "vcpkg::double-conversion", "vcpkg::drogon", "vcpkg::trantor", "vcpkg::jsoncpp", "vcpkg::openssl", "vcpkg::brotli", "vcpkg::zlib", "vcpkg::libuuid", "vcpkg::c-ares")
+
+target("create_server")
+    set_kind("binary")
+    add_deps("phoenix_mcp")
+    add_files("examples/create_server/*.cpp")
+    add_includedirs("src")
+    add_packages("vcpkg::reflectcpp", "vcpkg::yyjson", "vcpkg::spdlog", "crow", "vcpkg::folly", "vcpkg::glog", "vcpkg::gflags", "vcpkg::boost-context", "vcpkg::libevent", "vcpkg::double-conversion", "vcpkg::drogon", "vcpkg::trantor", "vcpkg::jsoncpp", "vcpkg::openssl", "vcpkg::brotli", "vcpkg::zlib", "vcpkg::libuuid", "vcpkg::c-ares")
+
+target("create_server_http")
+    set_kind("binary")
+    add_deps("phoenix_mcp")
+    add_files("examples/create_server_http/*.cpp")
+    add_includedirs("src")
+    add_packages("vcpkg::reflectcpp", "vcpkg::yyjson", "vcpkg::spdlog", "crow", "vcpkg::folly", "vcpkg::glog", "vcpkg::gflags", "vcpkg::boost-context", "vcpkg::libevent", "vcpkg::double-conversion", "vcpkg::drogon", "vcpkg::trantor", "vcpkg::jsoncpp", "vcpkg::openssl", "vcpkg::brotli", "vcpkg::zlib", "vcpkg::libuuid", "vcpkg::c-ares")
+
+
+
+================================================
+FILE: .clang-format
+================================================
+---
+Language:        Cpp
+AccessModifierOffset: -1
+AlignAfterOpenBracket: Align
+AlignArrayOfStructures: None
+AlignConsecutiveAssignments:
+  Enabled:         false
+  AcrossEmptyLines: false
+  AcrossComments:  false
+  AlignCompound:   false
+  AlignFunctionDeclarations: false
+  AlignFunctionPointers: false
+  PadOperators:    true
+AlignConsecutiveBitFields:
+  Enabled:         false
+  AcrossEmptyLines: false
+  AcrossComments:  false
+  AlignCompound:   false
+  AlignFunctionDeclarations: false
+  AlignFunctionPointers: false
+  PadOperators:    false
+AlignConsecutiveDeclarations:
+  Enabled:         false
+  AcrossEmptyLines: false
+  AcrossComments:  false
+  AlignCompound:   false
+  AlignFunctionDeclarations: true
+  AlignFunctionPointers: false
+  PadOperators:    false
+AlignConsecutiveMacros:
+  Enabled:         false
+  AcrossEmptyLines: false
+  AcrossComments:  false
+  AlignCompound:   false
+  AlignFunctionDeclarations: false
+  AlignFunctionPointers: false
+  PadOperators:    false
+AlignConsecutiveShortCaseStatements:
+  Enabled:         false
+  AcrossEmptyLines: false
+  AcrossComments:  false
+  AlignCaseArrows: false
+  AlignCaseColons: false
+AlignConsecutiveTableGenBreakingDAGArgColons:
+  Enabled:         false
+  AcrossEmptyLines: false
+  AcrossComments:  false
+  AlignCompound:   false
+  AlignFunctionDeclarations: false
+  AlignFunctionPointers: false
+  PadOperators:    false
+AlignConsecutiveTableGenCondOperatorColons:
+  Enabled:         false
+  AcrossEmptyLines: false
+  AcrossComments:  false
+  AlignCompound:   false
+  AlignFunctionDeclarations: false
+  AlignFunctionPointers: false
+  PadOperators:    false
+AlignConsecutiveTableGenDefinitionColons:
+  Enabled:         false
+  AcrossEmptyLines: false
+  AcrossComments:  false
+  AlignCompound:   false
+  AlignFunctionDeclarations: false
+  AlignFunctionPointers: false
+  PadOperators:    false
+AlignEscapedNewlines: Left
+AlignOperands:   Align
+AlignTrailingComments:
+  Kind:            Always
+  OverEmptyLines:  0
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowBreakBeforeNoexceptSpecifier: Never
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseExpressionOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortCompoundRequirementOnASingleLine: true
+AllowShortEnumsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLambdasOnASingleLine: All
+AllowShortLoopsOnASingleLine: true
+AllowShortNamespacesOnASingleLine: false
+AlwaysBreakAfterDefinitionReturnType: None
+AlwaysBreakBeforeMultilineStrings: true
+AttributeMacros:
+  - __capability
+  - absl_nonnull
+  - absl_nullable
+  - absl_nullability_unknown
+BinPackArguments: true
+BinPackLongBracedList: true
+BinPackParameters: BinPack
+BitFieldColonSpacing: Both
+BracedInitializerIndentWidth: -1
+BraceWrapping:
+  AfterCaseLabel:  false
+  AfterClass:      false
+  AfterControlStatement: Never
+  AfterEnum:       false
+  AfterExternBlock: false
+  AfterFunction:   false
+  AfterNamespace:  false
+  AfterObjCDeclaration: false
+  AfterStruct:     false
+  AfterUnion:      false
+  BeforeCatch:     false
+  BeforeElse:      false
+  BeforeLambdaBody: false
+  BeforeWhile:     false
+  IndentBraces:    false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+BreakAdjacentStringLiterals: true
+BreakAfterAttributes: Leave
+BreakAfterJavaFieldAnnotations: false
+BreakAfterReturnType: None
+BreakArrays:     true
+BreakBeforeBinaryOperators: None
+BreakBeforeConceptDeclarations: Always
+BreakBeforeBraces: Attach
+BreakBeforeInlineASMColon: OnlyMultiline
+BreakBeforeTemplateCloser: false
+BreakBeforeTernaryOperators: true
+BreakBinaryOperations: Never
+BreakConstructorInitializers: BeforeColon
+BreakFunctionDefinitionParameters: false
+BreakInheritanceList: BeforeColon
+BreakStringLiterals: true
+BreakTemplateDeclarations: Yes
+ColumnLimit:     80
+CommentPragmas:  '^ IWYU pragma:'
+CompactNamespaces: false
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+Cpp11BracedListStyle: true
+DerivePointerAlignment: false
+DisableFormat:   false
+EmptyLineAfterAccessModifier: Never
+EmptyLineBeforeAccessModifier: LogicalBlock
+EnumTrailingComma: Leave
+ExperimentalAutoDetectBinPacking: false
+FixNamespaceComments: true
+ForEachMacros:
+  - foreach
+  - Q_FOREACH
+  - BOOST_FOREACH
+IfMacros:
+  - KJ_IF_MAYBE
+IncludeBlocks:   Regroup
+IncludeCategories:
+  - Regex:           '^<ext/.*\.h>'
+    Priority:        2
+    SortPriority:    0
+    CaseSensitive:   false
+  - Regex:           '^<.*\.h>'
+    Priority:        1
+    SortPriority:    0
+    CaseSensitive:   false
+  - Regex:           '^<.*'
+    Priority:        2
+    SortPriority:    0
+    CaseSensitive:   false
+  - Regex:           '.*'
+    Priority:        3
+    SortPriority:    0
+    CaseSensitive:   false
+IncludeIsMainRegex: '([-_](test|unittest))?$'
+IncludeIsMainSourceRegex: ''
+IndentAccessModifiers: false
+IndentCaseBlocks: false
+IndentCaseLabels: true
+IndentExportBlock: true
+IndentExternBlock: AfterExternBlock
+IndentGotoLabels: true
+IndentPPDirectives: None
+IndentRequiresClause: true
+IndentWidth:     2
+IndentWrappedFunctionNames: false
+InsertBraces:    false
+InsertNewlineAtEOF: false
+InsertTrailingCommas: None
+IntegerLiteralSeparator:
+  Binary:          0
+  BinaryMinDigits: 0
+  Decimal:         0
+  DecimalMinDigits: 0
+  Hex:             0
+  HexMinDigits:    0
+JavaScriptQuotes: Leave
+JavaScriptWrapImports: true
+KeepEmptyLines:
+  AtEndOfFile:     false
+  AtStartOfBlock:  false
+  AtStartOfFile:   true
+KeepFormFeed:    false
+LambdaBodyIndentation: Signature
+LineEnding:      DeriveLF
+MacroBlockBegin: ''
+MacroBlockEnd:   ''
+MainIncludeChar: Quote
+MaxEmptyLinesToKeep: 1
+NamespaceIndentation: None
+ObjCBinPackProtocolList: Never
+ObjCBlockIndentWidth: 2
+ObjCBreakBeforeNestedBlockParam: true
+ObjCSpaceAfterProperty: false
+ObjCSpaceBeforeProtocolList: true
+OneLineFormatOffRegex: ''
+PackConstructorInitializers: NextLine
+PenaltyBreakAssignment: 2
+PenaltyBreakBeforeFirstCallParameter: 1
+PenaltyBreakBeforeMemberAccess: 150
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakOpenParenthesis: 0
+PenaltyBreakScopeResolution: 500
+PenaltyBreakString: 1000
+PenaltyBreakTemplateDeclaration: 10
+PenaltyExcessCharacter: 1000000
+PenaltyIndentedWhitespace: 0
+PenaltyReturnTypeOnItsOwnLine: 200
+PointerAlignment: Left
+PPIndentWidth:   -1
+QualifierAlignment: Leave
+RawStringFormats:
+  - Language:        Cpp
+    Delimiters:
+      - cc
+      - CC
+      - cpp
+      - Cpp
+      - CPP
+      - 'c++'
+      - 'C++'
+    CanonicalDelimiter: ''
+    BasedOnStyle:    google
+  - Language:        TextProto
+    Delimiters:
+      - pb
+      - PB
+      - proto
+      - PROTO
+    EnclosingFunctions:
+      - EqualsProto
+      - EquivToProto
+      - PARSE_PARTIAL_TEXT_PROTO
+      - PARSE_TEST_PROTO
+      - PARSE_TEXT_PROTO
+      - ParseTextOrDie
+      - ParseTextProtoOrDie
+      - ParseTestProto
+      - ParsePartialTestProto
+    CanonicalDelimiter: pb
+    BasedOnStyle:    google
+ReferenceAlignment: Pointer
+ReflowComments:  Always
+RemoveBracesLLVM: false
+RemoveEmptyLinesInUnwrappedLines: false
+RemoveParentheses: Leave
+RemoveSemicolon: false
+RequiresClausePosition: OwnLine
+RequiresExpressionIndentation: OuterScope
+SeparateDefinitionBlocks: Leave
+ShortNamespaceLines: 1
+SkipMacroDefinitionBody: false
+SortIncludes:
+  Enabled:         true
+  IgnoreCase:      false
+SortJavaStaticImport: Before
+SortUsingDeclarations: LexicographicNumeric
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterOperatorKeyword: false
+SpaceAfterTemplateKeyword: true
+SpaceAroundPointerQualifiers: Default
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCaseColon: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeJsonColon: false
+SpaceBeforeParens: ControlStatements
+SpaceBeforeParensOptions:
+  AfterControlStatements: true
+  AfterForeachMacros: true
+  AfterFunctionDefinitionName: false
+  AfterFunctionDeclarationName: false
+  AfterIfMacros:   true
+  AfterNot:        false
+  AfterOverloadedOperator: false
+  AfterPlacementOperator: true
+  AfterRequiresInClause: false
+  AfterRequiresInExpression: false
+  BeforeNonEmptyParentheses: false
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeSquareBrackets: false
+SpaceInEmptyBlock: false
+SpacesBeforeTrailingComments: 2
+SpacesInAngles:  Never
+SpacesInContainerLiterals: true
+SpacesInLineCommentPrefix:
+  Minimum:         1
+  Maximum:         -1
+SpacesInParens:  Never
+SpacesInParensOptions:
+  ExceptDoubleParentheses: false
+  InCStyleCasts:   false
+  InConditionalStatements: false
+  InEmptyParentheses: false
+  Other:           false
+SpacesInSquareBrackets: false
+Standard:        Auto
+StatementAttributeLikeMacros:
+  - Q_EMIT
+StatementMacros:
+  - Q_UNUSED
+  - QT_REQUIRE_VERSION
+TableGenBreakInsideDAGArg: DontBreak
+TabWidth:        8
+UseTab:          Never
+VerilogBreakBetweenInstancePorts: true
+WhitespaceSensitiveMacros:
+  - BOOST_PP_STRINGIZE
+  - CF_SWIFT_NAME
+  - NS_SWIFT_NAME
+  - PP_STRINGIZE
+  - STRINGIZE
+WrapNamespaceBodyWithEmptyLines: Leave
+...
+
+
+
+
+================================================
+FILE: .clang-tidy
+================================================
+# Generated from CLion Inspection settings
+---
+Checks: '-*,
+bugprone-argument-comment,
+bugprone-assert-side-effect,
+bugprone-bad-signal-to-kill-thread,
+bugprone-branch-clone,
+bugprone-copy-constructor-init,
+bugprone-dangling-handle,
+bugprone-dynamic-static-initializers,
+bugprone-fold-init-type,
+bugprone-forward-declaration-namespace,
+bugprone-forwarding-reference-overload,
+bugprone-inaccurate-erase,
+bugprone-incorrect-roundings,
+bugprone-integer-division,
+bugprone-lambda-function-name,
+bugprone-macro-parentheses,
+bugprone-macro-repeated-side-effects,
+bugprone-misplaced-operator-in-strlen-in-alloc,
+bugprone-misplaced-pointer-arithmetic-in-alloc,
+bugprone-misplaced-widening-cast,
+bugprone-move-forwarding-reference,
+bugprone-multiple-statement-macro,
+bugprone-no-escape,
+bugprone-parent-virtual-call,
+bugprone-posix-return,
+bugprone-reserved-identifier,
+bugprone-sizeof-container,
+bugprone-sizeof-expression,
+bugprone-spuriously-wake-up-functions,
+bugprone-string-constructor,
+bugprone-string-integer-assignment,
+bugprone-string-literal-with-embedded-nul,
+bugprone-suspicious-enum-usage,
+bugprone-suspicious-include,
+bugprone-suspicious-memset-usage,
+bugprone-suspicious-missing-comma,
+bugprone-suspicious-semicolon,
+bugprone-suspicious-string-compare,
+bugprone-suspicious-memory-comparison,
+bugprone-suspicious-realloc-usage,
+bugprone-swapped-arguments,
+bugprone-terminating-continue,
+bugprone-throw-keyword-missing,
+bugprone-too-small-loop-variable,
+bugprone-undefined-memory-manipulation,
+bugprone-undelegated-constructor,
+bugprone-unhandled-self-assignment,
+bugprone-unused-raii,
+bugprone-unused-return-value,
+bugprone-use-after-move,
+bugprone-virtual-near-miss,
+cert-dcl21-cpp,
+cert-dcl58-cpp,
+cert-err34-c,
+cert-err52-cpp,
+cert-err60-cpp,
+cert-flp30-c,
+cert-msc50-cpp,
+cert-msc51-cpp,
+cert-str34-c,
+cppcoreguidelines-interfaces-global-init,
+cppcoreguidelines-narrowing-conversions,
+cppcoreguidelines-pro-type-member-init,
+cppcoreguidelines-pro-type-static-cast-downcast,
+cppcoreguidelines-slicing,
+google-default-arguments,
+google-explicit-constructor,
+google-runtime-operator,
+hicpp-exception-baseclass,
+hicpp-multiway-paths-covered,
+misc-misplaced-const,
+misc-new-delete-overloads,
+misc-non-copyable-objects,
+misc-throw-by-value-catch-by-reference,
+misc-unconventional-assign-operator,
+misc-uniqueptr-reset-release,
+modernize-avoid-bind,
+modernize-concat-nested-namespaces,
+modernize-deprecated-headers,
+modernize-deprecated-ios-base-aliases,
+modernize-loop-convert,
+modernize-make-shared,
+modernize-make-unique,
+modernize-pass-by-value,
+modernize-raw-string-literal,
+modernize-redundant-void-arg,
+modernize-replace-auto-ptr,
+modernize-replace-disallow-copy-and-assign-macro,
+modernize-replace-random-shuffle,
+modernize-return-braced-init-list,
+modernize-shrink-to-fit,
+modernize-unary-static-assert,
+modernize-use-auto,
+modernize-use-bool-literals,
+modernize-use-emplace,
+modernize-use-equals-default,
+modernize-use-equals-delete,
+modernize-use-nodiscard,
+modernize-use-noexcept,
+modernize-use-nullptr,
+modernize-use-override,
+modernize-use-transparent-functors,
+modernize-use-uncaught-exceptions,
+mpi-buffer-deref,
+mpi-type-mismatch,
+openmp-use-default-none,
+performance-faster-string-find,
+performance-for-range-copy,
+performance-implicit-conversion-in-loop,
+performance-inefficient-algorithm,
+performance-inefficient-string-concatenation,
+performance-inefficient-vector-operation,
+performance-move-const-arg,
+performance-move-constructor-init,
+performance-no-automatic-move,
+performance-noexcept-move-constructor,
+performance-trivially-destructible,
+performance-type-promotion-in-math-fn,
+performance-unnecessary-copy-initialization,
+performance-unnecessary-value-param,
+portability-simd-intrinsics,
+readability-avoid-const-params-in-decls,
+readability-const-return-type,
+readability-container-size-empty,
+readability-convert-member-functions-to-static,
+readability-delete-null-pointer,
+readability-deleted-default,
+readability-inconsistent-declaration-parameter-name,
+readability-make-member-function-const,
+readability-misleading-indentation,
+readability-misplaced-array-index,
+readability-non-const-parameter,
+readability-redundant-control-flow,
+readability-redundant-declaration,
+readability-redundant-function-ptr-dereference,
+readability-redundant-smartptr-get,
+readability-redundant-string-cstr,
+readability-redundant-string-init,
+readability-simplify-subscript-expr,
+readability-static-accessed-through-instance,
+readability-static-definition-in-anonymous-namespace,
+readability-string-compare,
+readability-uniqueptr-delete-release,
+readability-use-anyofallof'
+
+
+================================================
+FILE: examples/create_server/main.cpp
+================================================
+//
+// Created by artem.d on 12.11.2025.
+//
+
+#include <rfl/Generic.hpp>
+#include <spdlog/sinks/basic_file_sink.h>
+
+#include "phoenix_mcp/server/mcp_request_handler.h"
+#include "phoenix_mcp/server/mcp_server.h"
+#include "phoenix_mcp/tool_registry/tool_registry.h"
+#include "phoenix_mcp/tool_registry/utils.hpp"
+#include "phoenix_mcp/transport/stdio_transport.h"
+
+struct BasicToolInput {
+  int a;
+  int b;
+};
+
+struct BasicToolOutput {
+  int mul_result;
+};
+
+auto sum_two_numbers(const BasicToolInput &input) {
+  rfl::Generic::Object obj;
+  obj["sum"] = input.a + input.b;
+  return pxm::utils::make_text_result(rfl::json::write(obj));
+}
+
+BasicToolOutput mul_two_numbers(const BasicToolInput &input) {
+  return {.mul_result = input.a * input.b};
+}
+
+int main() {
+  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
+    "./mcp_server.log", true);
+  spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+    "stdio", spdlog::sinks_init_list{file_sink}));
+  spdlog::set_level(spdlog::level::debug);
+  spdlog::flush_on(spdlog::level::debug);
+
+  auto registry = std::make_unique<pxm::tool::ToolRegistry>();
+  registry->register_tool<BasicToolInput>("sum_tool", "Sum two int numbers",
+                                          sum_two_numbers);
+  registry->register_tool<BasicToolInput, BasicToolOutput>(
+    "mul_tool", "Mul two int numbers", mul_two_numbers);
+
+  pxm::msg::types::ServerCapabilities caps{
+    .tools = pxm::msg::types::ToolsCapabilities{.list_changed = false}
+  };
+  pxm::msg::types::Implementation info{
+    .name = "My simple mcp server",
+    .version = "1.0.0",
+  };
+
+  auto handler = std::make_unique<pxm::server::McpRequestHandler>(
+    caps,
+    info,
+    "It is a simple mcp server for testing purposes",
+    std::move(registry));
+  auto transport = std::make_unique<pxm::server::StdioTransport>();
+
+  pxm::server::McpServer server{std::move(transport), std::move(handler)};
+  return server.run();
+}
+
+
+
+================================================
+FILE: examples/create_server_http/benchmark.sh
+================================================
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
+MCP_URL="${BASE_URL}/mcp"
+
+REQUESTS="${REQUESTS:-100}"
+CONCURRENCY="${CONCURRENCY:-8}"
+DELAY_MS="${DELAY_MS:-1000}"
+WARMUP="${WARMUP:-1}"
+
+SUM_PAYLOAD='{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"sum_tool","arguments":{"a":2,"b":3}}}'
+DELAYED_PAYLOAD="{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"tools/call\",\"params\":{\"name\":\"delayed_sum_tool\",\"arguments\":{\"a\":2,\"b\":3,\"delay_ms\":${DELAY_MS}}}}"
+
+post_json() {
+  local payload="$1"
+  curl -sS "${MCP_URL}" \
+    -H 'content-type: application/json' \
+    -d "${payload}" >/dev/null
+}
+
+echo "[warmup] initialize"
+curl -sS "${MCP_URL}" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"benchmark","version":"1.0"}}}' >/dev/null || true
+curl -sS "${MCP_URL}" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null || true
+
+for _ in $(seq 1 "${WARMUP}"); do
+  post_json "${SUM_PAYLOAD}"
+  post_json "${DELAYED_PAYLOAD}"
+done
+
+if command -v hey >/dev/null 2>&1; then
+  echo "[benchmark] sum_tool"
+  hey -n "${REQUESTS}" -c "${CONCURRENCY}" -m POST \
+    -H 'content-type: application/json' \
+    -d "${SUM_PAYLOAD}" \
+    "${MCP_URL}"
+
+  echo
+  echo "[benchmark] delayed_sum_tool delay_ms=${DELAY_MS}"
+  hey -n "${REQUESTS}" -c "${CONCURRENCY}" -m POST \
+    -H 'content-type: application/json' \
+    -d "${DELAYED_PAYLOAD}" \
+    "${MCP_URL}"
+else
+  echo "hey not found; running fallback benchmark with curl"
+  echo "[benchmark] delayed_sum_tool delay_ms=${DELAY_MS} concurrency=${CONCURRENCY}"
+  started_at="$(date +%s%3N)"
+  for _ in $(seq 1 "${CONCURRENCY}"); do
+    (
+      post_json "${DELAYED_PAYLOAD}"
+    ) &
+  done
+  wait
+  finished_at="$(date +%s%3N)"
+  elapsed_ms="$((finished_at - started_at))"
+  echo "elapsed_ms: ${elapsed_ms}"
+fi
+
+
+
+================================================
+FILE: examples/create_server_http/main.cpp
+================================================
+//
+// Created by artem.d on 18.02.2026.
+//
+
+#include <chrono>
+#include <thread>
+
+#include <folly/coro/Task.h>
+#include <rfl/Generic.hpp>
+#include <spdlog/sinks/basic_file_sink.h>
+
+#include "phoenix_mcp/server/mcp_request_handler.h"
+#include "phoenix_mcp/server/mcp_server.h"
+#include "phoenix_mcp/tool_registry/tool_registry.h"
+#include "phoenix_mcp/tool_registry/utils.hpp"
+#include "phoenix_mcp/transport/drogon_transport.h"
+
+struct BasicToolInput {
+  int a;
+  int b;
+};
+
+struct DelayedToolInput {
+  int a;
+  int b;
+  int delay_ms;
+};
+
+struct DelayedToolOutput {
+  int sum;
+  int delay_ms;
+  bool async;
+};
+
+auto sum_two_numbers(const BasicToolInput &input) {
+  rfl::Generic::Object obj;
+  obj["sum"] = input.a + input.b;
+  return pxm::utils::make_text_result(rfl::json::write(obj));
+}
+
+folly::coro::Task<pxm::msg::types::CallToolResult> delayed_sum_tool(
+    const DelayedToolInput& input) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(input.delay_ms));
+
+  rfl::Generic::Object obj;
+  obj["sum"] = input.a + input.b;
+  obj["delay_ms"] = input.delay_ms;
+  co_return pxm::utils::make_text_result(rfl::json::write(obj));
+}
+
+folly::coro::Task<DelayedToolOutput> delayed_sum_struct_tool(
+    const DelayedToolInput& input) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(input.delay_ms));
+  co_return DelayedToolOutput{
+      .sum = input.a + input.b,
+      .delay_ms = input.delay_ms,
+      .async = true,
+  };
+}
+
+int main() {
+  auto registry = std::make_unique<pxm::tool::ToolRegistry>();
+  registry->register_tool<BasicToolInput>("sum_tool", "Sum two int numbers",
+                                          sum_two_numbers);
+  registry->register_async_tool<DelayedToolInput>(
+      "delayed_sum_tool",
+      "Sum two numbers after an artificial delay to demonstrate async HTTP handling",
+      delayed_sum_tool,
+      pxm::tool::ToolRegistry::ExecutionPolicy::IoBound);
+  registry->register_async_tool<DelayedToolInput, DelayedToolOutput>(
+      "delayed_sum_struct_tool",
+      "Return a structured async result after an artificial delay",
+      delayed_sum_struct_tool,
+      pxm::tool::ToolRegistry::ExecutionPolicy::IoBound);
+
+  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
+    "./mcp_http_server.log", true);
+  spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+    "http", spdlog::sinks_init_list{file_sink}));
+  spdlog::set_level(spdlog::level::debug);
+
+  pxm::msg::types::ServerCapabilities capabilities{
+    .tools = pxm::msg::types::ToolsCapabilities{.list_changed = false}
+  };
+  pxm::msg::types::Implementation info{
+    .name = "My async HTTP MCP server",
+    .version = "1.0.0",
+  };
+
+  auto handler = std::make_unique<pxm::server::McpRequestHandler>(
+    capabilities,
+    info,
+    "It is a simple HTTP MCP server for testing purposes",
+    std::move(registry)
+  );
+
+  pxm::server::DrogonTransport::Config cfg{
+    .bind_address = "0.0.0.0",
+    .port = 8080,
+    .endpoint = "/mcp",
+    .health_endpoint = "/health",
+    .concurrency = 4,
+  };
+
+  auto transport = std::make_unique<pxm::server::DrogonTransport>(cfg);
+  pxm::server::McpServer server{std::move(transport), std::move(handler)};
+  return server.run();
+}
+
+
+
+================================================
+FILE: examples/create_server_http/smoke_test.sh
+================================================
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
+MCP_URL="${BASE_URL}/mcp"
+HEALTH_URL="${BASE_URL}/health"
+TMP_BODY="$(mktemp)"
+
+cleanup() {
+  rm -f "${TMP_BODY}"
+}
+
+trap cleanup EXIT
+
+post_json() {
+  local payload="$1"
+  local status
+  local started_at
+  local finished_at
+  local elapsed_ms
+  started_at="$(date +%s%3N)"
+  status="$(curl -sS -o "${TMP_BODY}" -w '%{http_code}' "${MCP_URL}" \
+    -H 'content-type: application/json' \
+    -d "${payload}")"
+  finished_at="$(date +%s%3N)"
+  elapsed_ms="$((finished_at - started_at))"
+  echo "status: ${status}"
+  echo "elapsed_ms: ${elapsed_ms}"
+  cat "${TMP_BODY}"
+}
+
+echo "[1/6] health"
+health_started_at="$(date +%s%3N)"
+health_status="$(curl -sS -o "${TMP_BODY}" -w '%{http_code}' "${HEALTH_URL}")"
+health_finished_at="$(date +%s%3N)"
+health_elapsed_ms="$((health_finished_at - health_started_at))"
+echo "status: ${health_status}"
+echo "elapsed_ms: ${health_elapsed_ms}"
+cat "${TMP_BODY}"
+echo
+
+echo "[2/6] initialize"
+post_json '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke-test","version":"1.0"}}}'
+echo
+
+echo "[3/6] notifications/initialized"
+post_json '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+echo
+
+echo "[4/6] sum_tool"
+post_json '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sum_tool","arguments":{"a":2,"b":3}}}'
+echo
+
+echo "[5/6] delayed_sum_tool"
+post_json '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"delayed_sum_tool","arguments":{"a":2,"b":3,"delay_ms":1000}}}'
+echo
+
+echo "[6/6] delayed_sum_struct_tool"
+post_json '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"delayed_sum_struct_tool","arguments":{"a":2,"b":3,"delay_ms":1000}}}'
+echo
+
+if command -v hey >/dev/null 2>&1; then
+  echo "[extra] parallel load with hey"
+  hey -n 20 -c 4 -m POST \
+    -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"delayed_sum_tool","arguments":{"a":2,"b":3,"delay_ms":1000}}}' \
+    "${MCP_URL}"
+else
+  echo "[extra] hey not found, running 4 parallel curl requests"
+  payload='{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"delayed_sum_tool","arguments":{"a":2,"b":3,"delay_ms":1000}}}'
+  for _ in 1 2 3 4; do
+    (
+      started_at="$(date +%s%3N)"
+      response="$(curl -sS "${MCP_URL}" -H 'content-type: application/json' -d "${payload}")"
+      finished_at="$(date +%s%3N)"
+      elapsed_ms="$((finished_at - started_at))"
+      echo "elapsed_ms: ${elapsed_ms} ${response}"
+    ) &
+  done
+  wait
+  echo
+fi
+
+
+
+================================================
+FILE: examples/using_tool_registry/main.cpp
+================================================
+#include <rfl/Generic.hpp>
+#include <rfl/json.hpp>
+
+#include "phoenix_mcp/tool_registry/utils.hpp"
+#include "phoenix_mcp/types/msg_types.hpp"
+#include "phoenix_mcp/tool_registry/tool_registry.h"
+#include "spdlog/spdlog.h"
+
+struct Test {
+  int a;
+  int b;
+};
+
+int main(int argc, char** argv) {
+  spdlog::set_level(spdlog::level::debug);
+  // Create tool registry.
+  pxm::tool::ToolRegistry registry;
+  // Register function.
+  registry.register_tool<Test>("test", "", [](const Test& test) {
+    rfl::Generic::Object obj;
+    obj["a"] = test.a + 1;
+    obj["b"] = test.b + 2;
+    return pxm::utils::make_text_result(rfl::json::write(obj));
+  });
+
+  // Create object with params to function.
+  Test test{0, 0};
+  // Call function with convertion to Generic.
+  const auto result = registry.call_tool("test", rfl::to_generic(test));
+  // Convert result(Generic) to object.
+  // Print result.
+  spdlog::info("Result: {}", rfl::json::write(result));
+  return 0;
+}
+
+
+================================================
+FILE: src/main.cpp
+================================================
+#include "phoenix_mcp/tool_registry/tool_registry.h"
+#include "spdlog/spdlog.h"
+
+int main(int argc, char** argv) {
+  spdlog::set_level(spdlog::level::debug);
+  return 0;
+}
+
+
+================================================
+FILE: src/phoenix_mcp/xmake.lua
+================================================
+add_rules("mode.release", "mode.debug")
+
+set_languages("c++20")
+add_defines("GLOG_USE_GLOG_EXPORT")
+
+add_requires("vcpkg::reflectcpp 0.22.0")
+add_requires("vcpkg::yyjson")
+add_requires("vcpkg::spdlog")
+add_requires("crow")
+add_requires("vcpkg::folly")
+add_requires("vcpkg::glog")
+add_requires("vcpkg::gflags")
+add_requires("vcpkg::boost-context")
+add_requires("vcpkg::libevent")
+add_requires("vcpkg::double-conversion")
+add_requires("vcpkg::drogon")
+add_requires("vcpkg::trantor")
+add_requires("vcpkg::jsoncpp")
+add_requires("vcpkg::openssl")
+add_requires("vcpkg::brotli")
+add_requires("vcpkg::zlib")
+add_requires("vcpkg::libuuid")
+add_requires("vcpkg::c-ares")
+
+target("phoenix_mcp")
+	set_kind("static")
+	add_files("*/*.cpp", {public=true})
+	add_packages("vcpkg::reflectcpp",
+	"vcpkg::yyjson",
+	"vcpkg::spdlog",
+	"crow",
+	"vcpkg::folly",
+	"vcpkg::glog",
+	"vcpkg::gflags",
+	"vcpkg::boost-context",
+	"vcpkg::libevent",
+	"vcpkg::double-conversion",
+	"vcpkg::drogon",
+	"vcpkg::trantor",
+	"vcpkg::jsoncpp",
+	"vcpkg::openssl",
+	"vcpkg::brotli",
+	"vcpkg::zlib",
+	"vcpkg::libuuid",
+	"vcpkg::c-ares")
+
+
+
+================================================
+FILE: src/phoenix_mcp/constants/constants.hpp
+================================================
+//
+// Created by artem.d on 07.11.2025.
+//
+
+#pragma once
+#include <array>
+#include <string_view>
+
+namespace pxm::constants::transport {
+enum class TransportType {
+  Stdio,
+  Http,
+  Sse
+};
+}
+
+
+namespace pxm::constants {
+constexpr auto kMcpVersion = "2025-06-18";
+constexpr std::array<transport::TransportType, 1> kSupportedTransport = {
+    transport::TransportType::Stdio
+};
+
+}
+
+namespace pxm::constants::exit {
+enum Code {
+  Success = 0,
+  Error = 1
+};
+
+}
+
+namespace pxm::constants::msg_error {
+enum Code {
+  Parse_error = -32700,
+  Invalid_request = -32600,
+  Method_not_found = -32601,
+  Invalid_params = -32602,
+  Internal_error = -32603,
+};
+}
+
+namespace pxm::msg::types::constants {
+
+constexpr std::string_view initialize_request = "initialize";
+constexpr std::string_view ping_request = "ping";
+constexpr std::string_view list_tools_request = "tools/list";
+constexpr std::string_view call_tool_request = "tools/call";
+constexpr std::string_view cancel_notification = "notifications/cancelled";
+constexpr std::string_view initialize_notification =
+    "notifications/initialized";
+constexpr std::string_view tool_list_changed_notification =
+    "notification/tools/listChanged";
+}
+
+
+================================================
+FILE: src/phoenix_mcp/runtime/runtime.cpp
+================================================
+#include "runtime.h"
+
+#include <algorithm>
+#include <thread>
+
+namespace pxm::runtime {
+
+namespace {
+
+size_t sanitize_threads(const size_t requested) {
+  return std::max<size_t>(1, requested);
+}
+
+} // namespace
+
+Runtime::Runtime(const size_t cpu_threads, const size_t io_threads)
+    : cpu_pool_(sanitize_threads(cpu_threads)),
+      io_pool_(sanitize_threads(io_threads)) {
+}
+
+folly::Executor::KeepAlive<folly::CPUThreadPoolExecutor>
+Runtime::cpu_executor() {
+  return cpu_pool_.getKeepAliveToken(cpu_pool_);
+}
+
+folly::Executor::KeepAlive<folly::IOThreadPoolExecutor>
+Runtime::io_executor() {
+  return io_pool_.getKeepAliveToken(io_pool_);
+}
+
+std::shared_ptr<Runtime> make_default_runtime() {
+  const auto hardware_threads =
+      static_cast<size_t>(std::thread::hardware_concurrency());
+  const auto cpu_threads = sanitize_threads(hardware_threads);
+  const auto io_threads = sanitize_threads(std::min<size_t>(4, cpu_threads));
+  return std::make_shared<Runtime>(cpu_threads, io_threads);
+}
+
+} // namespace pxm::runtime
+
+
+
+================================================
+FILE: src/phoenix_mcp/runtime/runtime.h
+================================================
+#pragma once
+
+#include <cstddef>
+#include <memory>
+
+#include <folly/Executor.h>
+#include <folly/executors/CPUThreadPoolExecutor.h>
+#include <folly/executors/IOThreadPoolExecutor.h>
+
+namespace pxm::runtime {
+
+class Runtime {
+public:
+  Runtime(size_t cpu_threads, size_t io_threads);
+
+  folly::Executor::KeepAlive<folly::CPUThreadPoolExecutor> cpu_executor();
+  folly::Executor::KeepAlive<folly::IOThreadPoolExecutor> io_executor();
+
+private:
+  folly::CPUThreadPoolExecutor cpu_pool_;
+  folly::IOThreadPoolExecutor io_pool_;
+};
+
+std::shared_ptr<Runtime> make_default_runtime();
+
+} // namespace pxm::runtime
+
+
+
+================================================
+FILE: src/phoenix_mcp/server/mcp_request_handler.cpp
+================================================
+//
+// Created by artem.d on 18.02.2026.
+//
+
+#include "mcp_request_handler.h"
+
+#include <folly/coro/BlockingWait.h>
+
+#include <utility>
+
+namespace pxm::server {
+  McpRequestHandler::McpRequestHandler(
+    msg::types::ServerCapabilities server_capabilities,
+    msg::types::Implementation server_info,
+    std::string instruction,
+    std::unique_ptr<tool::ToolRegistry> tool_registry)
+    : session_(std::make_unique<McpSession>(std::move(server_capabilities),
+                                            std::move(server_info),
+                                            std::move(instruction),
+                                            std::move(tool_registry))) {
+  }
+
+  std::optional<std::string> McpRequestHandler::handle_json(
+    const std::string &request_json) {
+    return folly::coro::blockingWait(handle_json_async(request_json));
+  }
+
+  folly::coro::Task<std::optional<std::string>>
+  McpRequestHandler::handle_json_async(std::string request_json) {
+    const auto result = co_await session_->handle_input_async(
+        std::move(request_json));
+    if (!result.has_value()) {
+      co_return std::nullopt;
+    }
+
+    co_return rfl::json::write(result.value());
+  }
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/server/mcp_request_handler.h
+================================================
+//
+// Created by artem.d on 18.02.2026.
+//
+
+#pragma once
+
+#include <folly/coro/Task.h>
+
+#include <memory>
+#include <optional>
+#include <string>
+
+#include "mcp_session.h"
+
+namespace pxm::server {
+
+/// Thin adapter around McpSession that exposes string-in/string-out API.
+class McpRequestHandler {
+public:
+  McpRequestHandler(msg::types::ServerCapabilities server_capabilities,
+                    msg::types::Implementation server_info,
+                    std::string instruction,
+                    std::unique_ptr<tool::ToolRegistry> tool_registry);
+
+  /// Returns JSON-RPC response body if request requires response.
+  std::optional<std::string> handle_json(const std::string& request_json);
+  folly::coro::Task<std::optional<std::string>> handle_json_async(
+      std::string request_json);
+
+private:
+  std::unique_ptr<McpSession> session_;
+};
+
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/server/mcp_server.h
+================================================
+#pragma once
+
+#include <memory>
+#include <utility>
+
+#include "../transport/i_transport.h"
+#include "mcp_request_handler.h"
+
+namespace pxm::server {
+
+class McpServer {
+public:
+  McpServer(std::unique_ptr<ITransport> transport,
+            std::unique_ptr<McpRequestHandler> handler)
+      : transport_(std::move(transport)), handler_(std::move(handler)) {
+  }
+
+  int run() {
+    return transport_->run([this](const std::string_view msg) {
+      return handler_->handle_json_async(std::string(msg));
+    });
+  }
+
+private:
+  std::unique_ptr<ITransport> transport_;
+  std::unique_ptr<McpRequestHandler> handler_;
+};
+
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/server/mcp_session.cpp
+================================================
+//
+// Created by artem.d on 10.11.2025.
+//
+
+#include "mcp_session.h"
+
+#include <folly/coro/BlockingWait.h>
+
+#include <utility>
+
+namespace pxm::server {
+
+// clang-format off
+McpSession::McpSession(
+    msg::types::ServerCapabilities server_capabilities,
+    msg::types::Implementation server_info,
+    std::string instruction,
+    std::unique_ptr<tool::ToolRegistry> tool_registry) :
+  tool_registry_(std::move(tool_registry)),
+  server_capabilities_(std::move(server_capabilities)),
+  server_info_(std::move(server_info)),
+  instruction_(std::move(instruction)) {
+}
+// clang-format on
+
+std::optional<rfl::Generic>
+McpSession::handle_input(const std::string& request) {
+  return folly::coro::blockingWait(handle_input_async(request));
+}
+
+folly::coro::Task<std::optional<rfl::Generic>>
+McpSession::handle_input_async(std::string request) {
+  if (const auto req = try_serialize_request(request); req.has_value())
+    co_return co_await handle_request_async(*req);
+
+  if (const auto notif = try_serialize_notification(request); notif.has_value())
+    co_return handle_notification(*notif);
+
+  spdlog::error("handle_input| Parsing Error");
+  co_return std::nullopt;
+}
+
+rfl::Generic McpSession::handle_request(const msg::types::Request& request) {
+  return folly::coro::blockingWait(handle_request_async(request));
+}
+
+folly::coro::Task<rfl::Generic>
+McpSession::handle_request_async(const msg::types::Request& request) {
+  Stage current_stage;
+  {
+    std::lock_guard lock(state_mutex_);
+
+    if (has_init_timeout()) {
+      co_return create_error("Initialization timeout", request.id);
+    }
+
+    current_stage = stage_;
+    if (current_stage == Stage::Uninitialized) {
+      co_return try_initialize(request);
+    }
+
+    if (current_stage == Stage::Initialized) {
+      co_return create_error("Waiting for 'notifications/initialized'",
+                             request.id);
+    }
+
+    if (current_stage == Stage::Shutdown) {
+      co_return create_error("Server is shutting down", request.id);
+    }
+  }
+
+  if (current_stage == Stage::Operation) {
+    co_return co_await handle_operation_async(request);
+  }
+
+  spdlog::error("McpSession::handle_input| Invalid stage");
+  co_return create_error("Something went wrong", request.id);
+}
+
+bool McpSession::has_init_timeout() const {
+  const bool is_correct_stage = stage_ == Stage::Initialized;
+  const bool is_timeout = std::chrono::steady_clock::now() > init_timeout_;
+  return is_correct_stage && is_timeout;
+}
+
+std::optional<msg::types::Request> McpSession::try_serialize_request(
+    const std::string& request) {
+
+  std::optional<msg::types::Request> request_ = std::nullopt;
+  try {
+    request_ = rfl::json::read<msg::types::Request>(request).value();
+  } catch (const std::exception& e) {
+    spdlog::error("Failed to serialize request: {}", e.what());
+  }
+
+  return request_;
+}
+
+rfl::Generic McpSession::try_initialize(const msg::types::Request& request) {
+  // Check correct msg init method.
+  if (request.method != msg_t::constants::initialize_request) {
+    return create_error("Invalid request method", request.id);
+  }
+
+  // Change current stage to initialized.
+  stage_ = Stage::Initialized;
+  spdlog::info("McpSession| Switch to initialized stage.");
+
+  const msg::types::InitializeResult result{
+      .protocol_version = constants::kMcpVersion,
+      .capabilities = server_capabilities_,
+      .server_info = server_info_,
+      .instruction = instruction_
+  };
+
+  const msg::types::InitializeResultRPC resp{
+      .id = request.id,
+      .result = result
+  };
+
+  return rfl::to_generic(resp);
+}
+
+template <typename T>
+rfl::Generic McpSession::make_response(const T& result,
+                                       const msg::types::RequestId& id) const {
+
+  const msg::types::Response resp{
+      .jsonrpc = "2.0",
+      .result = rfl::to_generic(result),
+      .id = id
+  };
+
+  return rfl::to_generic(resp);
+}
+
+rfl::Generic McpSession::handle_operation(const msg::types::Request& request) {
+  return folly::coro::blockingWait(handle_operation_async(request));
+}
+
+folly::coro::Task<rfl::Generic>
+McpSession::handle_operation_async(const msg::types::Request& request) {
+  if (request.method == msg_t::constants::list_tools_request) {
+    const auto tool_list = tool_registry_->get_tool_list();
+    const auto tool_list_res = msg_t::ListToolsResult{.tools = tool_list};
+    co_return make_response(tool_list_res, request.id);
+  }
+
+  // TODO: Refactor this
+  if (request.method == msg_t::constants::call_tool_request) {
+    co_return co_await call_tool_async(request);
+  }
+
+  co_return create_error("Method not found", request.id,
+                         constants::msg_error::Invalid_request);
+}
+
+rfl::Generic McpSession::create_error(const std::string& msg,
+                                      const msg::types::RequestId& id,
+                                      const int code) {
+  const msg::types::Error error{
+      .id = id,
+      .error = msg::types::ErrorData{
+          .code = code,
+          .message = msg
+      }
+  };
+
+  return rfl::to_generic(error);
+}
+
+std::optional<msg::types::Notification>
+McpSession::try_serialize_notification(const std::string& json) {
+  try {
+    return rfl::json::read<msg::types::Notification>(json).value();
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+
+// TODO: You must be void?
+std::optional<rfl::Generic> McpSession::handle_notification(
+    const msg::types::Notification& notif) {
+  bool is_initialize = false;
+  {
+    std::lock_guard lock(state_mutex_);
+    is_initialize = stage_ == Stage::Initialized;
+  }
+  const bool is_correct_method =
+      notif.method == msg_t::constants::initialize_notification;
+
+  spdlog::debug("McpSession| is_initialize: {}, is_correct_method: {}",
+                is_initialize, is_correct_method);
+
+  if (is_initialize && is_correct_method) {
+    std::lock_guard lock(state_mutex_);
+    stage_ = Stage::Operation;
+    spdlog::info("McpSession| Switch to operation stage");
+  }
+
+  return std::nullopt;
+}
+
+rfl::Generic McpSession::call_tool(const msg::types::Request& request) const {
+  return folly::coro::blockingWait(
+      const_cast<McpSession*>(this)->call_tool_async(request));
+}
+
+folly::coro::Task<rfl::Generic>
+McpSession::call_tool_async(const msg::types::Request& request) {
+  spdlog::debug("McpSession::call_tool| Call tool {}",
+                rfl::json::write(request));
+
+  // Convert to tool request;
+  const auto generic = rfl::to_generic(request);
+  const auto [flatten, opt_params] = rfl::from_generic<
+    msg_t::CallToolRequest>(generic).value();
+
+  if (!opt_params.has_value()) {
+    co_return create_error("Invalid request", request.id);
+  }
+
+  const auto [name, arguments] = opt_params.value();
+
+  spdlog::debug("McpSession::handle_operation| Call tool, name: {}",
+                name);
+  spdlog::debug(
+      "McpSession::handle_operation| Call tool, args: {}",
+      rfl::json::write(arguments));
+
+  const auto result = co_await tool_registry_->call_tool_async(
+      name, arguments.value());
+
+  co_return make_response(result, request.id);
+}
+
+}
+
+
+
+================================================
+FILE: src/phoenix_mcp/server/mcp_session.h
+================================================
+//
+// Created by artem.d on 10.11.2025.
+//
+
+#pragma once
+
+#include <folly/coro/Task.h>
+
+#include <chrono>
+#include <mutex>
+
+#include <rfl/Generic.hpp>
+#include <rfl/json.hpp>
+#include <spdlog/spdlog.h>
+
+#include "../types/msg_types.hpp"
+#include "../constants/constants.hpp"
+#include "../tool_registry/tool_registry.h"
+
+
+namespace pxm::server {
+
+namespace ch = std::chrono;
+namespace cnt_error = constants::msg_error;
+namespace msg_t = msg::types;
+using optional_request = std::optional<msg::types::Request>;
+using optional_notification = std::optional<msg::types::Notification>;
+
+/// @brief Class for managing MCP server session
+/// Handles requests and notifications, manages server state
+/// and coordinates tool registry operations
+class McpSession {
+public:
+  /// @brief Constructor for server session
+  /// @param server_capabilities Server capabilities (tools, resources, etc.)
+  /// @param server_info Implementation info (name, version)
+  /// @param instruction Server instruction
+  /// @param tool_registry Unique pointer to tool registry
+  McpSession(msg::types::ServerCapabilities server_capabilities,
+             msg::types::Implementation server_info,
+             std::string instruction,
+             std::unique_ptr<tool::ToolRegistry> tool_registry);
+
+  /// @brief Handle JSON request as string
+  /// @param request JSON string containing the request
+  /// @return Response in rfl::Generic format
+  std::optional<rfl::Generic> handle_input(const std::string& request);
+  folly::coro::Task<std::optional<rfl::Generic>> handle_input_async(
+      std::string request);
+
+  /// @brief Handle structured request
+  /// @param request Structured request object
+  /// @return Response in rfl::Generic format
+  rfl::Generic handle_request(const msg::types::Request& request);
+  folly::coro::Task<rfl::Generic> handle_request_async(
+      const msg::types::Request& request);
+
+private:
+  /// @brief Server lifecycle stages
+  enum class Stage {
+    Uninitialized, ///< Server not initialized yet
+    Initialized, ///< Server successfully initialized
+    Operation, ///< Server in normal operation mode
+    Shutdown ///< Server shutting down
+  };
+
+  ///< Initialization timeout (5 seconds)
+  ch::time_point<ch::steady_clock> init_timeout_ =
+      ch::steady_clock::now() + ch::seconds(5);
+  ///< Current server stage
+  Stage stage_ = Stage::Uninitialized;
+
+  ///< Tool registry for managing available tools
+  std::unique_ptr<tool::ToolRegistry> tool_registry_;
+  ///< Server capabilities configuration
+  msg::types::ServerCapabilities server_capabilities_;
+  ///< Server implementation details
+  msg::types::Implementation server_info_;
+  ///< Server instruction text
+  std::string instruction_;
+
+  // ------ Functions ------
+  /// @brief Check if initialization timeout has expired
+  /// @return True if timeout has passed
+  bool has_init_timeout() const;
+
+  /// @brief Attempt to deserialize JSON string to Request object
+  /// @param request JSON string to deserialize
+  /// @return Optional request object, empty if deserialization failed
+  static optional_request try_serialize_request(const std::string& request);
+
+  /// @brief Handle initialization request
+  /// @param request Initialization request object
+  /// @return Response with initialization result
+  rfl::Generic try_initialize(const msg::types::Request& request);
+
+  template <class T>
+  rfl::Generic make_response(const T& result,
+                            const msg::types::RequestId& id) const;
+
+  /// @brief Handle operational requests (tools, resources, etc.)
+  /// @param request Request to handle
+  /// @return Response with operation result
+  rfl::Generic handle_operation(const msg::types::Request& request);
+  folly::coro::Task<rfl::Generic> handle_operation_async(
+      const msg::types::Request& request);
+
+  /// @brief Create standardized error response
+  /// @param msg Error message
+  /// @param id Request ID for error correlation
+  /// @param code Error code (default: invalid parameters)
+  /// @return Error response in rfl::Generic format
+  static rfl::Generic create_error(const std::string& msg,
+                                   const msg::types::RequestId& id,
+                                   int code = cnt_error::Code::Invalid_params);
+
+  /// @brief Attempt to deserialize JSON string to Notification object
+  /// @param json JSON string to deserialize
+  /// @return Optional notification object, empty if deserialization failed
+  static optional_notification try_serialize_notification(
+      const std::string& json);
+
+  /// @brief Handle incoming notification
+  /// @param notif Notification object to process
+  /// @return Response or empty if no response needed
+  std::optional<rfl::Generic> handle_notification(
+      const msg::types::Notification& notif);
+
+
+  rfl::Generic call_tool(const msg::types::Request& request) const;
+  folly::coro::Task<rfl::Generic> call_tool_async(
+      const msg::types::Request& request);
+
+  mutable std::mutex state_mutex_;
+};
+}
+
+
+
+================================================
+FILE: src/phoenix_mcp/server/server.cpp
+================================================
+//
+// Created by artem.d on 09.11.2025.
+//
+
+#include "server.h"
+
+#include <iostream>
+#include <utility>
+
+namespace pxm::server {
+
+Server::Server(std::string name, std::string version,
+               std::unique_ptr<AbstractTransport> transport,
+               std::unique_ptr<tool::ToolRegistry> tool_registry,
+               std::string instruction) : transport_(std::move(transport)) {
+  spdlog::info("Server::Server| Server created");
+  server_info_ = {
+      .name = std::move(name),
+      .version = std::move(version),
+  };
+
+  // Now we support only tools. Without change event system
+  server_capabilities_ = {
+      .tools = msg::types::ToolsCapabilities{.list_changed = false}
+  };
+
+  instruction_ = std::move(instruction);
+
+  request_handler_ = std::make_unique<McpRequestHandler>(
+      server_capabilities_, server_info_, instruction_, std::move(tool_registry));
+
+}
+
+int Server::start_server() {
+  try {
+    spdlog::info("Server::start_server| Start server");
+    start_server_();
+  } catch (std::exception& e) {
+    spdlog::error("Server::start_server| Error: {}", e.what());
+    return cnt::exit::Error;
+  }
+
+  spdlog::info("Server::start_server| Server stopped");
+  return cnt::exit::Success;
+}
+
+void Server::change_tool_registry(
+    std::unique_ptr<tool::ToolRegistry> tool_registry) {
+  spdlog::info("Server::change_tool_registry| Change tool registry");
+  // TODO: Add custom logic for make event to client
+}
+
+
+void Server::start_server_() {
+  while (true) {
+    std::string json = transport_->read_msg();
+    spdlog::debug("Server::start_server_| Read message: {}", json);
+
+    if (json.empty()) {
+      spdlog::info("Server| Empty message, shutdown server");
+      break;
+    }
+
+    if (const auto result = request_handler_->handle_json(json);
+        result.has_value()) {
+      const auto& res_str = result.value();
+      spdlog::debug("Server::start_server_| Write message: {}", res_str);
+      transport_->write_msg(res_str);
+    }
+  }
+}
+}
+
+
+
+================================================
+FILE: src/phoenix_mcp/server/server.h
+================================================
+//
+// Created by artem.d on 09.11.2025.
+//
+
+#pragma once
+#include <memory>
+#include <string>
+
+#include <spdlog/spdlog.h>
+
+#include "mcp_request_handler.h"
+#include "../constants/constants.hpp"
+#include "../transport/abstract_transport.h"
+#include "../tool_registry/tool_registry.h"
+
+
+namespace cnt = pxm::constants;
+namespace cnt_t = pxm::constants::transport;
+
+
+namespace pxm::server {
+/**
+ * @brief Main server class that handles MCP protocol communication
+ *
+ * The Server class is responsible for initializing and running the MCP server,
+ * managing transport connections, and processing incoming requests.
+ */
+class Server {
+public:
+  /**
+   * @brief Construct a new Server object
+   *
+   * @param name Server name for identification
+   * @param version Server description
+   * @param transport Unique pointer to transport implementation for communication
+   * @param tool_registry Unique pointer to tool registry for handling MCP tools
+   * @param instruction Custom instruction that can be used by model.
+   */
+  Server(std::string name, std::string version,
+         std::unique_ptr<AbstractTransport> transport,
+         std::unique_ptr<tool::ToolRegistry> tool_registry,
+         std::string instruction);
+
+
+  /**
+   * @brief Start the server and begin processing requests
+   *
+   * Initializes the server and starts listening for incoming messages
+   * through the configured transport mechanism.
+   *
+   * @return int Exit code (0 for success, non-zero for error)
+   */
+  int start_server();
+
+  void change_tool_registry(std::unique_ptr<tool::ToolRegistry> tool_registry);
+
+private:
+  std::string name_; ///< Server name
+  std::string desc_; ///< Server description
+  msg::types::Implementation server_info_;
+  std::string instruction_;
+  msg::types::ServerCapabilities server_capabilities_;
+
+  std::unique_ptr<McpRequestHandler> request_handler_;
+
+  ///< Transport mechanism for communication
+  std::unique_ptr<AbstractTransport> transport_;
+
+  /**
+   * @brief Internal implementation of server startup logic
+   *
+   * This method contains the core server initialization and message processing loop.
+   * It is called by start_server() and should not be called directly.
+   */
+  void start_server_();
+};
+};
+
+
+
+================================================
+FILE: src/phoenix_mcp/tool_registry/tool_registry.cpp
+================================================
+//
+// Created by artem.d on 09.11.2025.
+//
+
+#include "tool_registry.h"
+
+#include <folly/coro/BlockingWait.h>
+
+#include <ranges>
+
+namespace pxm::tool {
+msg::types::CallToolResult ToolRegistry::call_tool(const std::string& name,
+                                                   const rfl::Generic& params) {
+  return folly::coro::blockingWait(call_tool_async(name, params));
+}
+
+folly::coro::Task<msg::types::CallToolResult>
+ToolRegistry::call_tool_async(const std::string& name,
+                              const rfl::Generic& params) {
+  // Find the tool in the registry
+  const auto& tool = tools_.find(name);
+  if (tool == tools_.end()) {
+    throw std::runtime_error(
+        "ToolRegistry::call_tool| Tool not found: " + name);
+  }
+
+  // Call the tool
+  co_return co_await tool->second(params);
+}
+
+std::vector<pxm::msg::types::Tool> ToolRegistry::get_tool_list() {
+  // Reserve size
+  const auto values = tool_descriptions_ | std::views::values;
+  std::vector<msg::types::Tool> tools{values.begin(), values.end()};
+  return std::move(tools);
+}
+
+}
+
+
+
+================================================
+FILE: src/phoenix_mcp/tool_registry/tool_registry.h
+================================================
+//
+// Created by artem.d on 09.11.2025.
+//
+#pragma once
+
+#include <folly/coro/Task.h>
+#include <folly/coro/ViaIfAsync.h>
+
+#include <memory>
+#include <map>
+#include <string>
+#include <functional>
+
+#include <spdlog/spdlog.h>
+#include <rfl/json.hpp>
+#include <rfl/Generic.hpp>
+
+#include "utils.hpp"
+#include "../runtime/runtime.h"
+#include "../types/msg_types.hpp"
+
+namespace pxm::tool {
+/// @brief Function type for internal tool handlers that work with generic parameters
+using AsyncToolHandlerInternal = std::function<
+    folly::coro::Task<msg::types::CallToolResult>(const rfl::Generic& params)>;
+
+/// @brief Template function type for tool handlers with specific parameter types
+/// @tparam InputParams The parameter struct type for this tool
+template <typename InputParams>
+using ToolHandler = std::function<msg::types::CallToolResult(
+    const InputParams& params)>;
+
+template <typename InputParams, typename OutputParams>
+using ToolHandlerWithOutput = std::function<OutputParams(const InputParams& params)>;
+
+template <typename InputParams>
+using AsyncToolHandler = std::function<
+    folly::coro::Task<msg::types::CallToolResult>(const InputParams& params)>;
+
+template <typename InputParams, typename OutputParams>
+using AsyncToolHandlerWithOutput = std::function<
+    folly::coro::Task<OutputParams>(const InputParams& params)>;
+
+/// @brief Registry for managing available tools in the MCP server
+/// 
+/// This class handles registration of tools with their schemas and handlers,
+/// allowing the server to dynamically expose tools to clients.
+class ToolRegistry {
+public:
+  enum class ExecutionPolicy {
+    Inline,
+    CpuBound,
+    IoBound,
+  };
+
+  explicit ToolRegistry(std::shared_ptr<runtime::Runtime> runtime =
+                            runtime::make_default_runtime())
+      : runtime_(std::move(runtime)) {
+  }
+
+  /// @brief Register a new tool with the registry
+  /// 
+  /// @tparam InputParams The parameter struct type for this tool
+  /// @param name Unique name for the tool
+  /// @param description Human-readable description of what the tool does
+  /// @param handler Function that implements the tool's behavior
+  template <typename InputParams>
+  void register_tool(const std::string& name, const std::string& description,
+                     const ToolHandler<InputParams>& handler) {
+    register_async_tool<InputParams>(
+        name, description,
+        [handler](const InputParams& params)
+            -> folly::coro::Task<msg::types::CallToolResult> {
+          co_return handler(params);
+        });
+  }
+
+  template <typename InputParams, typename OutputParams>
+  void register_tool(const std::string& name, const std::string& description,
+                     const ToolHandlerWithOutput<InputParams, OutputParams>& handler) {
+    register_async_tool<InputParams, OutputParams>(
+        name, description,
+        [handler](const InputParams& params) -> folly::coro::Task<OutputParams> {
+          co_return handler(params);
+        });
+  }
+
+  template <typename InputParams>
+  void register_async_tool(const std::string& name,
+                           const std::string& description,
+                           const AsyncToolHandler<InputParams>& handler,
+                           const ExecutionPolicy policy =
+                               ExecutionPolicy::CpuBound) {
+    // Generate JSON schema for the parameter type
+    const auto schema_str = rfl::json::to_schema<InputParams>();
+    auto schema = rfl::json::read<msg::types::ToolInputSchema>(schema_str).
+        value();
+
+    std::string ref = schema.ref.value();
+    const size_t suffix_position = ref.find_last_of('/');
+    ref = ref.substr(suffix_position + 1);
+
+    // Create tool description structure
+    const msg::types::Tool tool = {
+      .name = name,
+      .description = description,
+      .input_schema = schema.defs.value()[ref],
+  };
+
+    // Log the tool specification for debugging
+    spdlog::debug(
+        "ToolRegistry::register_tool| Create the tool with this specification: {}",
+        rfl::json::write(tool));
+
+    // Store tool description and wrap handler for internal use
+    tool_descriptions_[name] = tool;
+    auto runtime = runtime_;
+    tools_[name] = [handler, runtime, policy](const rfl::Generic& generic_params)
+        -> folly::coro::Task<msg::types::CallToolResult> {
+      // Convert generic parameters to the specific type
+      InputParams params = rfl::from_generic<InputParams>(generic_params).value();
+      // Call the actual handler
+      auto task = handler(params);
+      switch (policy) {
+        case ExecutionPolicy::Inline:
+          co_return co_await std::move(task);
+        case ExecutionPolicy::CpuBound:
+          co_return co_await folly::coro::co_viaIfAsync(
+              runtime->cpu_executor(), std::move(task));
+        case ExecutionPolicy::IoBound:
+          co_return co_await folly::coro::co_viaIfAsync(
+              runtime->io_executor(), std::move(task));
+      }
+
+      co_return co_await std::move(task);
+    };
+
+    spdlog::debug("ToolRegistry::register_tool| Tool {} registered", name);
+  }
+
+  template <typename InputParams, typename OutputParams>
+  void register_async_tool(
+      const std::string& name, const std::string& description,
+      const AsyncToolHandlerWithOutput<InputParams, OutputParams>& handler,
+      const ExecutionPolicy policy = ExecutionPolicy::CpuBound) {
+    register_async_tool<InputParams>(
+        name, description,
+        [handler](const InputParams& params)
+            -> folly::coro::Task<msg::types::CallToolResult> {
+          const auto output = co_await handler(params);
+          const auto output_str = rfl::json::write(output);
+          co_return utils::make_text_result(output_str);
+        },
+        policy);
+  }
+
+  msg::types::CallToolResult call_tool(const std::string& name,
+                                       const rfl::Generic& params);
+  folly::coro::Task<msg::types::CallToolResult> call_tool_async(
+      const std::string& name, const rfl::Generic& params);
+
+  std::vector<msg::types::Tool> get_tool_list();
+
+private:
+  /// Map of tool names to their internal handlers
+  std::map<std::string, AsyncToolHandlerInternal> tools_;
+
+  /// Map of tool names to their metadata descriptions
+  std::map<std::string, msg::types::Tool> tool_descriptions_;
+
+  std::shared_ptr<runtime::Runtime> runtime_;
+
+};
+
+}
+
+
+
+================================================
+FILE: src/phoenix_mcp/tool_registry/utils.hpp
+================================================
+//
+// Created by artem.d on 11.11.2025.
+//
+#pragma once
+#include <spdlog/spdlog.h>
+#include "../types/msg_types.hpp"
+
+
+namespace pxm::utils {
+inline msg::types::CallToolResult make_text_result(std::string text,
+                                                   bool is_error = false) {
+  spdlog::debug("make_text_result| input text {}", text);
+
+  msg::types::TextContent txt{.text = std::move(text)};
+  std::vector<msg::types::VariantContent> cv{std::move(txt)};
+  msg::types::CallToolResult result{
+      .content = cv,
+      .is_error = is_error
+  };
+  return result;
+}
+
+// то же для картинки, если понадобится
+inline msg::types::CallToolResult make_image_result(std::string base64,
+                                                    std::string mime,
+                                                    bool is_error = false) {
+  msg::types::ImageContent img{.data = std::move(base64),
+                               .mime_type = std::move(mime)};
+  std::vector<msg::types::VariantContent> cv{std::move(img)};
+  msg::types::CallToolResult result{
+      .content = cv,
+      .is_error = is_error
+  };
+
+  return result;
+}
+}
+
+
+================================================
+FILE: src/phoenix_mcp/transport/abstract_transport.h
+================================================
+//
+// Created by artem.d on 09.11.2025.
+//
+
+#pragma once
+
+#include <string>
+
+
+namespace pxm::server {
+/**
+ * @brief Abstract base class for transport implementations
+ *
+ * This class defines the interface for different transport mechanisms
+ * that can be used to communicate with the MCP server. Concrete implementations
+ * should inherit from this class and provide specific read/write functionality.
+ */
+class AbstractTransport {
+public:
+  /**
+   * @brief Virtual destructor for proper cleanup of derived classes
+   */
+  virtual ~AbstractTransport() = default;
+
+  /**
+   * @brief Reads a message from the transport
+   *
+   * This method should be implemented by concrete transport classes
+   * to read data from their specific source (e.g., stdin, network socket, etc.)
+   *
+   * @return std::string The received message
+   */
+  virtual std::string read_msg() = 0;
+
+  /**
+   * @brief Writes a message to the transport
+   *
+   * This method should be implemented by concrete transport classes
+   * to write data to their specific destination (e.g., stdout, network socket, etc.)
+   *
+   * @param msg The message to be sent
+   */
+  virtual void write_msg(const std::string& msg) = 0;
+};
+}
+
+
+================================================
+FILE: src/phoenix_mcp/transport/crow_transport.cpp
+================================================
+#include "crow_transport.h"
+
+#include <folly/coro/BlockingWait.h>
+#include <spdlog/spdlog.h>
+
+#if __has_include(<crow.h>)
+#ifdef signal_add
+#undef signal_add
+#endif
+#include <crow.h>
+#define PXM_HAS_CROW 1
+#else
+#define PXM_HAS_CROW 0
+#endif
+
+namespace pxm::server {
+
+CrowTransport::CrowTransport() : CrowTransport(Config{}) {
+}
+
+CrowTransport::CrowTransport(
+    Config cfg, std::shared_ptr<runtime::Runtime> runtime)
+    : cfg_(std::move(cfg)), runtime_(std::move(runtime)) {
+}
+
+int CrowTransport::run(Handler on_message) {
+#if PXM_HAS_CROW
+  crow::SimpleApp app;
+
+  auto endpoint = cfg_.endpoint;
+  if (endpoint.empty() || endpoint[0] != '/') {
+    endpoint.insert(endpoint.begin(), '/');
+  }
+
+  auto health = cfg_.health_endpoint;
+  if (health.empty() || health[0] != '/') {
+    health.insert(health.begin(), '/');
+  }
+
+  app.route_dynamic(health)
+      .methods(crow::HTTPMethod::GET)([] {
+        return crow::response(200, "ok");
+      });
+
+  app.route_dynamic(endpoint)
+      .methods(crow::HTTPMethod::POST)(
+          [&](const crow::request& req, crow::response& res) {
+            if (req.body.empty()) {
+              res.code = 400;
+              res.write("Request body is empty");
+              res.end();
+              return;
+            }
+
+            auto task = on_message(req.body);
+            auto executor = runtime_->cpu_executor();
+            executor->add(
+                [task = std::move(task), &res]() mutable {
+                  const auto response =
+                      folly::coro::blockingWait(std::move(task));
+                  if (!response.has_value()) {
+                    res.code = 204;
+                    res.end();
+                    return;
+                  }
+
+                  res.code = 200;
+                  res.set_header("content-type", "application/json");
+                  res.write(*response);
+                  res.end();
+                });
+          });
+
+  spdlog::info("CrowTransport| Listening on {}:{}{}",
+               cfg_.bind_address, cfg_.port, endpoint);
+
+  app.concurrency(cfg_.concurrency)
+      .bindaddr(cfg_.bind_address)
+      .port(cfg_.port)
+      .run();
+  return 0;
+#else
+  spdlog::error("CrowTransport| Crow headers not found.");
+  return 1;
+#endif
+}
+
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/transport/crow_transport.h
+================================================
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "i_transport.h"
+#include "../runtime/runtime.h"
+
+namespace pxm::server {
+
+class CrowTransport final : public ITransport {
+public:
+  struct Config {
+    std::string bind_address = "0.0.0.0";
+    uint16_t port = 8080;
+    std::string endpoint = "/mcp";
+    std::string health_endpoint = "/health";
+    int concurrency = 1;
+  };
+
+  CrowTransport();
+  explicit CrowTransport(
+      Config cfg,
+      std::shared_ptr<runtime::Runtime> runtime =
+          runtime::make_default_runtime());
+
+  int run(Handler on_message) override;
+
+private:
+  Config cfg_;
+  std::shared_ptr<runtime::Runtime> runtime_;
+};
+
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/transport/drogon_transport.cpp
+================================================
+#include "drogon_transport.h"
+
+#include <folly/coro/BlockingWait.h>
+#include <spdlog/spdlog.h>
+
+#if __has_include(<drogon/drogon.h>)
+#include <drogon/drogon.h>
+#define PXM_HAS_DROGON 1
+#else
+#define PXM_HAS_DROGON 0
+#endif
+
+namespace pxm::server {
+
+DrogonTransport::DrogonTransport() : DrogonTransport(Config{}) {
+}
+
+DrogonTransport::DrogonTransport(
+    Config cfg, std::shared_ptr<runtime::Runtime> runtime)
+    : cfg_(std::move(cfg)), runtime_(std::move(runtime)) {
+}
+
+int DrogonTransport::run(Handler on_message) {
+#if PXM_HAS_DROGON
+  auto endpoint = cfg_.endpoint;
+  if (endpoint.empty() || endpoint[0] != '/') {
+    endpoint.insert(endpoint.begin(), '/');
+  }
+
+  auto health = cfg_.health_endpoint;
+  if (health.empty() || health[0] != '/') {
+    health.insert(health.begin(), '/');
+  }
+
+  auto& app = drogon::app();
+  app.addListener(cfg_.bind_address, cfg_.port);
+  app.setThreadNum(cfg_.concurrency);
+
+  app.registerHandler(
+      health,
+      [](const drogon::HttpRequestPtr&,
+         std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        auto resp = drogon::HttpResponse::newHttpResponse();
+        resp->setStatusCode(drogon::k200OK);
+        resp->setBody("ok");
+        callback(resp);
+      },
+      {drogon::Get});
+
+  app.registerHandler(
+      endpoint,
+      [on_message = std::move(on_message), runtime = runtime_]
+      (const drogon::HttpRequestPtr& req,
+       std::function<void(const drogon::HttpResponsePtr&)>&& callback) mutable {
+        const auto body = req->body();
+        if (body.empty()) {
+          auto resp = drogon::HttpResponse::newHttpResponse();
+          resp->setStatusCode(drogon::k400BadRequest);
+          resp->setBody("Request body is empty");
+          callback(resp);
+          return;
+        }
+
+        auto task = on_message(body);
+        auto executor = runtime->cpu_executor();
+        executor->add(
+            [task = std::move(task), callback = std::move(callback)]() mutable {
+              const auto response = folly::coro::blockingWait(std::move(task));
+              auto resp = drogon::HttpResponse::newHttpResponse();
+              if (!response.has_value()) {
+                resp->setStatusCode(drogon::k204NoContent);
+                callback(resp);
+                return;
+              }
+
+              resp->setStatusCode(drogon::k200OK);
+              resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+              resp->setBody(*response);
+              callback(resp);
+            });
+      },
+      {drogon::Post});
+
+  spdlog::info("DrogonTransport| Listening on {}:{}{}",
+               cfg_.bind_address, cfg_.port, endpoint);
+
+  app.run();
+  return 0;
+#else
+  spdlog::error("DrogonTransport| Drogon headers not found.");
+  return 1;
+#endif
+}
+
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/transport/drogon_transport.h
+================================================
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "i_transport.h"
+#include "../runtime/runtime.h"
+
+namespace pxm::server {
+
+class DrogonTransport final : public ITransport {
+public:
+  struct Config {
+    std::string bind_address = "0.0.0.0";
+    uint16_t port = 8080;
+    std::string endpoint = "/mcp";
+    std::string health_endpoint = "/health";
+    int concurrency = 1;
+  };
+
+  DrogonTransport();
+  explicit DrogonTransport(
+      Config cfg,
+      std::shared_ptr<runtime::Runtime> runtime =
+          runtime::make_default_runtime());
+
+  int run(Handler on_message) override;
+
+private:
+  Config cfg_;
+  std::shared_ptr<runtime::Runtime> runtime_;
+};
+
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/transport/i_transport.h
+================================================
+#pragma once
+
+#include <folly/coro/Task.h>
+
+#include <functional>
+#include <optional>
+#include <string>
+#include <string_view>
+
+namespace pxm::server {
+
+class ITransport {
+public:
+  using Handler = std::function<
+      folly::coro::Task<std::optional<std::string>>(std::string_view)>;
+
+  virtual ~ITransport() = default;
+  virtual int run(Handler on_message) = 0;
+};
+
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/transport/stdio_transport.cpp
+================================================
+//
+// Created by artem.d on 09.11.2025.
+//
+
+#include "stdio_transport.h"
+
+#include <folly/coro/BlockingWait.h>
+
+#include <iostream>
+#include <spdlog/spdlog.h>
+
+
+namespace pxm::server {
+int StdioTransport::run(Handler on_message) {
+  std::string line;
+  while (true) {
+    if (!std::getline(std::cin, line)) {
+      spdlog::info("StdioTransport| stdin closed -> shutdown");
+      return 0;
+    }
+
+    if (line.empty()) {
+      spdlog::info("StdioTransport| empty line -> shutdown");
+      return 0;
+    }
+
+    const auto response = folly::coro::blockingWait(on_message(line));
+    if (!response.has_value()) {
+      continue;
+    }
+
+    if (*response == "null") {
+      spdlog::error("StdioTransport| refusing to write 'null' to stdout");
+      continue;
+    }
+
+    std::cout << *response << '\n';
+    std::cout.flush();
+  }
+}
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/transport/stdio_transport.h
+================================================
+//
+// Created by artem.d on 09.11.2025.
+//
+#pragma once
+
+#include "i_transport.h"
+
+namespace pxm::server {
+class StdioTransport final : public ITransport {
+public:
+  int run(Handler on_message) override;
+};
+} // namespace pxm::server
+
+
+
+================================================
+FILE: src/phoenix_mcp/types/msg_types.hpp
+================================================
+//
+// Created by artem.d on 07.11.2025.
+//
+#pragma once
+
+#include <map>
+#include <optional>
+#include <string>
+#include <variant>
+#include <vector>
+#include <rfl/Rename.hpp>
+#include <rfl/Generic.hpp>
+#include <rfl/Flatten.hpp>
+
+namespace pxm::msg::types {
+
+/* ---------- Basic Types ---------- */
+
+/// @brief Request identifier used for correlating JSON-RPC requests and responses
+/// @details Can be either integer or string to accommodate different client implementations
+using RequestId = std::variant<int, std::string>;
+
+/// @brief Container for optional method parameters
+/// @details Uses rfl::Generic to represent flexible JSON-like parameter objects
+using OptionalParams = std::optional<rfl::Generic>;
+
+/// @brief Generic result type for successful responses
+/// @details Provides flexibility in returning various data structures from methods
+using Result = rfl::Generic;
+
+/// @brief Structure representing an empty result
+/// @details Standard representation for operations that don't return meaningful data
+using EmptyResult = std::map<std::string, rfl::Generic>;
+
+/// @brief Token used to track progress of long-running operations
+/// @details Can be either integer or string identifier for progress reporting
+using ProgressToken = std::variant<int, std::string>;
+
+/// @brief Cursor for pagination through large result sets
+/// @details String-based pointer used to navigate between pages of results
+using Cursor = std::string;
+
+/// @brief Specification of logging verbosity level
+/// @details String value representing standard log levels: "debug", "info", "warning", "error"
+using LoggingLevel = std::string;
+
+/// @brief Identifier for participant role in conversation
+/// @details String value indicating role: "user", "assistant", or "system"
+using Role = std::string;
+
+/* ---------- JSON-RPC Structures ---------- */
+
+/// @brief Basic JSON-RPC request structure
+/// @details Minimal structure containing essential fields for a JSON-RPC request
+struct Request {
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  std::string method; /// @brief Name of the method to be invoked
+  RequestId id; /// @brief Unique identifier for request-response correlation
+  OptionalParams params; /// @brief Optional parameters for the requested method
+
+};
+
+/// @brief Extended JSON-RPC request with optional parameters
+/// @details Complete request structure that includes parameters for method invocation
+struct MinimalRequest {
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  std::string method; /// @brief Name of the method to be invoked
+  RequestId id; /// @brief Unique identifier for request-response correlation
+};
+
+/// @brief JSON-RPC response structure for successful operations
+/// @details Contains the result of a successfully processed request
+struct Response {
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  Result result; /// @brief Result data from the processed request
+  RequestId id; /// @brief Identifier of the corresponding request
+};
+
+/// @brief Notification message structure
+/// @details One-way message from client to server that doesn't require a response
+struct Notification {
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  std::string method; /// @brief Name of the method to be invoked
+  OptionalParams params; /// @brief Optional parameters for the notification
+};
+
+/// @brief Container for error information
+/// @details Holds detailed information about errors that occur during request processing
+struct ErrorData {
+  int code; /// @brief Numeric error code following JSON-RPC standards
+  std::string message; /// @brief Human-readable description of the error
+  rfl::Generic data; /// @brief Additional context-specific error details
+};
+
+/// @brief Complete error response structure
+/// @details Response sent when a request cannot be successfully processed
+struct Error {
+  std::string jsonrpc = "2.0"; /// @brief JSON-RPC protocol version identifier
+  RequestId id; /// @brief Identifier of the failed request
+  ErrorData error; /// @brief Detailed error information
+};
+
+/* ---------- Pagination / Content / Tools ---------- */
+
+/// @brief Parameters for paginated requests
+/// @details Controls how paginated data retrieval is performed
+struct PaginatedRequestParams {
+  std::optional<Cursor> cursor;
+  /// @brief Optional cursor for resuming pagination
+};
+
+/// @brief Wrapper for requests that support pagination
+/// @details Provides a standardized way to handle paginated operations
+struct PaginatedRequest {
+  /// @brief Optional pagination control parameters
+  std::optional<PaginatedRequestParams> params;
+};
+
+/// @brief Schema definition for tool input parameters
+/// @details Defines the structure and validation rules for tool inputs
+struct InputSchema {
+  std::string type = "object"; /// @brief JSON schema type (fixed to "object")
+  OptionalParams properties;
+  /// @brief Definition of object properties
+   /// @brief List of property names that are required
+  std::optional<std::vector<std::string> > required;
+};
+
+/// @brief Definition of an available tool
+/// @details Contains metadata and input schema for a callable tool
+struct Tool {
+  std::string name;
+  /// @brief Unique identifier for the tool
+   /// @brief Optional human-readable description of tool functionality
+  std::optional<std::string> description;
+  /// @brief Schema defining valid input parameters for the tool
+  rfl::Rename<"inputSchema", InputSchema> input_schema;
+};
+
+/// @brief Result structure for listing available tools
+/// @details Contains the complete list of tools exposed by the server
+struct ListToolsResult {
+  std::vector<Tool> tools; /// @brief Collection of available tools
+};
+
+/* --- Content types --- */
+
+/// @brief Text content representation
+/// @details Structure for plain text content
+struct TextContent {
+  std::string type = "text"; /// @brief Content type discriminator
+  std::string text; /// @brief Actual text content
+};
+
+/// @brief Image content representation
+/// @details Structure for image data
+struct ImageContent {
+  std::string type = "image"; /// @brief Content type discriminator
+  std::string data;
+  /// @brief Image data (typically base64 encoded)
+   /// @brief MIME type of the image (e.g., "image/png")
+  rfl::Rename<"mimeType", std::string> mime_type;
+};
+
+/// @brief Generic resource reference
+/// @details Points to an external resource by URI
+struct ResourceContent {
+  std::string uri;
+  /// @brief Uniform Resource Identifier
+   /// @brief Optional MIME type of the referenced resource
+  rfl::Rename<"mimeType", std::optional<std::string> > mime_type;
+};
+
+/// @brief Text resource content
+/// @details Resource that contains text data
+struct TextResourceContent {
+  /// @brief Inherited resource metadata
+  rfl::Flatten<ResourceContent> flatten;
+  std::string text; /// @brief Text content of the resource
+};
+
+/// @brief Binary resource content
+/// @details Resource that contains binary/blob data
+struct BlobResourceContent {
+  /// @brief Inherited resource metadata
+  rfl::Flatten<ResourceContent> flatten;
+  std::string blob; /// @brief Binary content of the resource
+};
+
+/// @brief Embedded resource reference
+/// @details Represents a resource embedded within content
+struct EmbeddedResource {
+  std::string type = "resource";
+  /// @brief Content type discriminator
+   /// @brief Actual resource content (text or binary)
+  std::variant<TextResourceContent, BlobResourceContent> resource;
+};
+
+/// @brief Variant type for different content types
+/// @details Can hold any of the supported content structures
+using VariantContent = std::variant<TextContent, ImageContent, EmbeddedResource>
+;
+
+/// @brief Result of a tool execution
+/// @details Contains output content from tool execution
+struct CallToolResult {
+  /// @brief Output content produced by the tool
+  std::vector<VariantContent> content;
+  /// @brief Optional flag indicating if result represents an error
+  rfl::Rename<"isError", std::optional<bool> > is_error;
+};
+
+/* ---------- Tool Calls ---------- */
+
+/// @brief Parameters for calling a tool
+/// @details Specifies which tool to call and with what arguments
+struct CallToolParams {
+  std::string name; /// @brief Name of the tool to invoke
+  OptionalParams arguments; /// @brief Arguments to pass to the tool
+};
+
+/// @brief JSON schema property definition
+/// @details Defines properties within a JSON schema
+struct PropertySchema {
+  std::string type; /// @brief Data type of the property
+};
+
+/// @brief Complete tool input schema with references
+/// @details Extended schema definition supporting JSON schema references
+struct ToolInputSchema {
+  /// @brief JSON schema version identifier
+  rfl::Rename<"$schema", std::string> schema;
+  /// @brief Reference to another schema definition
+  rfl::Rename<"$ref", std::string> ref;
+  /// @brief Local schema definitions for reuse
+  rfl::Rename<"$defs", std::map<std::string, InputSchema> > defs;
+};
+
+/* ---------- Requests ---------- */
+
+/// @brief Initialization request from client
+/// @details First message sent by client to establish connection
+struct InitializeRequest {
+  /// @brief Inherited JSON-RPC request fields
+  rfl::Flatten<Request> flatten;
+};
+
+/// @brief Ping request for connectivity testing
+/// @details Used to check server availability and responsiveness
+struct PingRequest {
+  /// @brief Inherited JSON-RPC request fields
+  rfl::Flatten<Request> flatten;
+};
+
+/// @brief Request to list available tools
+/// @details Asks server to return all registered tools
+struct ListToolsRequest {
+  /// @brief Inherited JSON-RPC request fields
+  rfl::Flatten<Request> flatten;
+};
+
+/// @brief Request to execute a specific tool
+/// @details Invokes a tool with specified arguments
+struct CallToolRequest {
+  /// @brief Inherited JSON-RPC request fields
+  rfl::Flatten<MinimalRequest> flatten;
+  /// @brief Optional parameters specifying tool and arguments
+  std::optional<CallToolParams> params;
+};
+
+/* ---------- Notifications ---------- */
+
+/// @brief Cancellation notification
+/// @details Informs server that a previous request has been cancelled
+struct CancelNotification {
+  /// @brief Inherited notification fields
+  rfl::Flatten<Notification> flatten;
+};
+
+/// @brief Initialization complete notification
+/// @details Sent by server after successful initialization
+struct InitializeNotification {
+  rfl::Flatten<Notification> flatten;
+  /// @brief Inherited notification fields
+};
+
+/// @brief Tools list changed notification
+/// @details Informs client that available tools have changed
+struct ToolListChangedNotification {
+  /// @brief Inherited notification fields
+  rfl::Flatten<Notification> flatten;
+};
+
+/* ---------- Capability Parameters ---------- */
+
+/// @brief Parameters for cancellation notifications
+/// @details Provides context for why an operation was cancelled
+struct NotificationParams {
+  RequestId request_id; /// @brief ID of the cancelled request
+  std::optional<std::string> reason; /// @brief Optional reason for cancellation
+};
+
+/// @brief Parameters for roots capability
+/// @details Configuration for root directory monitoring
+struct RootsParams {
+  rfl::Rename<"listChanged", std::optional<bool>> list_changed; /// @brief Whether list of roots can change
+};
+
+/// @brief Client capabilities declaration
+/// @details What features the client supports
+struct ClientCapabilities {
+  OptionalParams experimental; /// @brief Experimental features support
+  std::optional<RootsParams> roots; /// @brief Roots monitoring capability
+  std::optional<rfl::Generic> sampling; /// @brief Sampling capability
+};
+
+/// @brief Server implementation metadata
+/// @details Information about server software
+struct Implementation {
+  std::string name; /// @brief Server name
+  std::string version; /// @brief Server version
+};
+
+/// @brief Parameters for initialization request
+/// @details Contains client capabilities and metadata for setup
+struct InitializeParams {
+  /// @brief MCP protocol version supported by client
+  rfl::Rename<"protocolVersion", std::string> protocol_version;
+
+  /// @brief Features supported by the client
+  ClientCapabilities capabilities;
+
+  /// @brief Information about the connecting client
+  rfl::Rename<"clientInfo", Implementation> client_info;
+};
+
+/* ---------- Server Capabilities ---------- */
+
+/// @brief Prompts-related server capabilities
+/// @details What prompt-related features the server supports
+struct PromptsCapabilities {
+  /// @brief Whether prompt list can change dynamically
+  rfl::Rename<"listChanged", std::optional<bool> > list_changed;
+};
+
+/// @brief Resources-related server capabilities
+/// @details What resource-related features the server supports
+struct ResourcesCapabilities {
+  /// @brief Whether clients can subscribe to resource changes
+  rfl::Rename<"subscribe", std::optional<bool> > subscribe;
+  /// @brief Whether resource list can change dynamically
+  rfl::Rename<"listChanged", std::optional<bool> > list_changed;
+};
+
+/// @brief Tools-related server capabilities
+/// @details What tool-related features the server supports
+struct ToolsCapabilities {
+  /// @brief Whether tool list can change dynamically
+  rfl::Rename<"listChanged", std::optional<bool> > list_changed;
+};
+
+/// @brief Complete server capabilities declaration
+/// @details All features supported by the server
+struct ServerCapabilities {
+  OptionalParams experimental; /// @brief Experimental features
+  std::optional<rfl::Generic> logging; /// @brief Logging capability
+  std::optional<PromptsCapabilities> prompts; /// @brief Prompts capability
+  std::optional<ResourcesCapabilities> resources;
+  /// @brief Resources capability
+  std::optional<ToolsCapabilities> tools; /// @brief Tools capability
+};
+
+/// @brief Result of successful initialization
+/// @details Server capabilities and metadata sent to client
+struct InitializeResult {
+  /// @brief MCP protocol version supported by server
+  rfl::Rename<"protocolVersion", std::string> protocol_version;
+
+  ServerCapabilities capabilities;
+  /// @brief Features supported by this server
+
+  /// @brief Information about this server instance
+  rfl::Rename<"serverInfo", Implementation> server_info;
+
+  std::optional<std::string> instruction;
+  /// @brief Optional instruction for client behavior
+};
+
+/// @brief JSON-RPC wrapper for initialization result
+/// @details Complete response structure for initialize request
+struct InitializeResultRPC {
+  /// @brief JSON-RPC protocol version
+  std::string jsonrpc = "2.0";
+  /// @brief ID of the original initialize request
+  RequestId id;
+  /// @brief Actual initialization result data
+  InitializeResult result;
+};
+
+} // namespace pxm::msg::types
+
