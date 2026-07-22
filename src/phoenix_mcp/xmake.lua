@@ -27,40 +27,41 @@ local with_crow = os.getenv("PHOENIX_MCP_WITH_CROW") ~= "0"
 
 target("phoenix_mcp_core")
     set_kind("static")
-    add_files("src/phoenix_mcp/runtime/runtime.cpp")
-    add_includedirs("src", "include", {public = true})
+    add_files("core/error.cc")
+    add_files("runtime/runtime.cpp")
+    add_includedirs(".", "../../include", {public = true})
     add_packages("vcpkg::folly", "vcpkg::spdlog", {public = true})
 
 target("phoenix_mcp_protocol")
     set_kind("headeronly")
-    add_includedirs("include", {public = true})
+    add_includedirs("../../include", {public = true})
     add_deps("phoenix_mcp_core")
 
 target("phoenix_mcp_server")
     set_kind("static")
-    add_files("src/phoenix_mcp/server/*.cpp")
-    add_files("src/phoenix_mcp/tool_registry/tool_registry.cpp")
-    add_includedirs("src", "include", {public = true})
+    add_files("server/*.cpp")
+    add_files("tool_registry/tool_registry.cpp")
+    add_includedirs(".", "../../include", {public = true})
     add_deps("phoenix_mcp_protocol")
     add_packages("vcpkg::reflectcpp", "vcpkg::folly", "vcpkg::spdlog", {public = true})
 
 target("phoenix_mcp_client")
     set_kind("headeronly")
-    add_includedirs("include", {public = true})
+    add_includedirs("../../include", {public = true})
     add_deps("phoenix_mcp_protocol")
 
 target("phoenix_mcp_transport_stdio")
     set_kind("static")
-    add_files("src/phoenix_mcp/transport/stdio_transport.cpp")
-    add_includedirs("src", "include", {public = true})
+    add_files("transport/stdio_transport.cpp")
+    add_includedirs(".", "../../include", {public = true})
     add_deps("phoenix_mcp_core")
     add_packages("vcpkg::folly", "vcpkg::spdlog", {public = true})
 
 if with_drogon then
     target("phoenix_mcp_transport_drogon")
         set_kind("static")
-        add_files("src/phoenix_mcp/transport/drogon_transport.cpp")
-        add_includedirs("src", "include", {public = true})
+        add_files("transport/drogon_transport.cpp")
+        add_includedirs(".", "../../include", {public = true})
         add_deps("phoenix_mcp_core")
         add_packages("vcpkg::folly", "vcpkg::spdlog", "vcpkg::drogon", {public = true})
 else
@@ -71,8 +72,8 @@ end
 if with_crow then
     target("phoenix_mcp_transport_crow")
         set_kind("static")
-        add_files("src/phoenix_mcp/transport/crow_transport.cpp")
-        add_includedirs("src", "include", {public = true})
+        add_files("transport/crow_transport.cpp")
+        add_includedirs(".", "../../include", {public = true})
         add_deps("phoenix_mcp_core")
         add_packages("vcpkg::folly", "vcpkg::spdlog", "crow", {public = true})
 else
@@ -83,7 +84,7 @@ end
 if with_otel then
     target("phoenix_mcp_telemetry")
         set_kind("headeronly")
-        add_includedirs("include", {public = true})
+        add_includedirs("../../include", {public = true})
         add_deps("phoenix_mcp_core")
         add_packages("opentelemetry-cpp", {public = true})
         add_defines("PXM_WITH_OTEL=1", {public = true})

@@ -1,6 +1,7 @@
 #ifndef PHOENIX_MCP_COMPAT_PXM_H_
 #define PHOENIX_MCP_COMPAT_PXM_H_
 
+#include "phoenix_mcp/core/error.h"
 #include "phoenix_mcp/core/runtime.h"
 #include "phoenix_mcp/protocol/message_types.h"
 #include "phoenix_mcp/server/mcp_request_handler.h"
