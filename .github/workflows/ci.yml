@@ -28,6 +28,10 @@ jobs:
           git clone --depth=1 https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
           $VCPKG_ROOT/bootstrap-vcpkg.sh -disableMetrics
           echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build autoconf autoconf-archive automake libtool pkg-config
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
