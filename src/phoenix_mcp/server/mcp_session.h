@@ -13,8 +13,8 @@
 #include <rfl/json.hpp>
 
 #include "../constants/constants.hpp"
-#include "../tool_registry/tool_registry.h"
-#include "../types/msg_types.hpp"
+#include "phoenix_mcp/protocol/message_types.h"
+#include "phoenix_mcp/tool_registry/tool_registry.h"
 
 namespace phoenix_mcp::server {
 
