@@ -113,3 +113,4 @@ kcachegrind
 # CMake
 CMakeLists.txt
 /cmake-build-debug/
+digest.txt
