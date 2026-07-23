@@ -36,6 +36,7 @@ endif()
 
 set(phoenix_mcp_sources
     src/phoenix_mcp/core/error.cc
+    src/phoenix_mcp/protocol/json_rpc_codec.cc
     src/phoenix_mcp/runtime/runtime.cpp
     src/phoenix_mcp/server/mcp_request_handler.cpp
     src/phoenix_mcp/server/mcp_session.cpp
@@ -207,7 +208,13 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_mcp_error_test
     PRIVATE PhoenixMcp::Core GTest::gtest_main)
 
+  add_executable(phoenix_mcp_json_rpc_codec_test
+    tests/phoenix_mcp/protocol/json_rpc_codec_test.cc)
+  target_link_libraries(phoenix_mcp_json_rpc_codec_test
+    PRIVATE PhoenixMcp::Protocol GTest::gtest_main)
+
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
+  gtest_discover_tests(phoenix_mcp_json_rpc_codec_test)
   gtest_discover_tests(phoenix_mcp_mcp_error_test)
 
   add_test(
