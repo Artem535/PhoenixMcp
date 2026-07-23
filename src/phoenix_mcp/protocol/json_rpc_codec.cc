@@ -63,25 +63,25 @@ folly::Expected<JsonRpcMessage, McpError> decode_message(
   const auto has_result = obj.count("result") > 0;
   const auto has_error = obj.count("error") > 0;
 
-  if (has_method && has_id) {
+  if (has_method && has_id && !has_result && !has_error) {
     auto req = decode_json<msg::types::Request>(json);
     if (!req) return folly::makeUnexpected(std::move(req.error()));
     return std::move(req.value());
   }
 
-  if (has_method && !has_id) {
+  if (has_method && !has_id && !has_result && !has_error) {
     auto notif = decode_json<msg::types::Notification>(json);
     if (!notif) return folly::makeUnexpected(std::move(notif.error()));
     return std::move(notif.value());
   }
 
-  if (has_result && has_id) {
+  if (has_result && has_id && !has_method && !has_error) {
     auto resp = decode_json<msg::types::Response>(json);
     if (!resp) return folly::makeUnexpected(std::move(resp.error()));
     return std::move(resp.value());
   }
 
-  if (has_error && has_id) {
+  if (has_error && has_id && !has_method && !has_result) {
     auto err = decode_json<msg::types::Error>(json);
     if (!err) return folly::makeUnexpected(std::move(err.error()));
     return std::move(err.value());
@@ -90,6 +90,16 @@ folly::Expected<JsonRpcMessage, McpError> decode_message(
   return folly::makeUnexpected(
       McpError(ErrorCode::InvalidRequest,
                "cannot determine JSON-RPC message type"));
+}
+
+folly::Expected<std::string, McpError> encode(
+    const msg::types::Request& request) {
+  try {
+    return rfl::json::write(request);
+  } catch (const std::exception& e) {
+    return folly::makeUnexpected(
+        McpError(ErrorCode::SerializationFailed, e.what()));
+  }
 }
 
 folly::Expected<std::string, McpError> encode(

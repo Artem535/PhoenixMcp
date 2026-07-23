@@ -67,6 +67,10 @@ class McpErrorCategory : public std::error_category {
         return "tool execution failed";
       case ErrorCode::InternalError:
         return "internal error";
+      case ErrorCode::AuthenticationFailed:
+        return "authentication failed";
+      case ErrorCode::AuthorizationFailed:
+        return "authorization failed";
       default:
         return "unknown error";
     }
@@ -102,6 +106,13 @@ McpError::McpError(ErrorCode code, std::string message,
       message_(std::move(message)),
       cause_(std::move(cause)) {}
 
+McpError::McpError(ErrorCode code, std::string message, rfl::Generic data,
+                   std::shared_ptr<McpError> cause)
+    : code_(code),
+      message_(std::move(message)),
+      data_(std::move(data)),
+      cause_(std::move(cause)) {}
+
 ErrorCode McpError::code() const noexcept { return code_; }
 
 ErrorCategory McpError::category() const noexcept {
@@ -114,7 +125,9 @@ ErrorCategory McpError::category() const noexcept {
   if (c >= 600 && c < 700) return ErrorCategory::Cancellation;
   if (c >= 700 && c < 800) return ErrorCategory::Lifecycle;
   if (c >= 800 && c < 900) return ErrorCategory::Tool;
-  return ErrorCategory::Internal;
+  if (c >= 900 && c < 1000) return ErrorCategory::Internal;
+  if (c >= 1000 && c < 1100) return ErrorCategory::Authentication;
+  return ErrorCategory::Authorization;
 }
 
 const std::string& McpError::message() const noexcept { return message_; }

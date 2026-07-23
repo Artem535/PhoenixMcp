@@ -1,10 +1,10 @@
 #ifndef PHOENIX_MCP_PROTOCOL_JSON_RPC_CODEC_H_
 #define PHOENIX_MCP_PROTOCOL_JSON_RPC_CODEC_H_
 
-#include <folly/Expected.h>
-
 #include <string>
 #include <variant>
+
+#include <folly/Expected.h>
 
 #include "phoenix_mcp/core/error.h"
 #include "phoenix_mcp/protocol/message_types.h"
@@ -29,6 +29,9 @@ folly::Expected<msg::types::Error, core::McpError> decode_error(
 
 folly::Expected<JsonRpcMessage, core::McpError> decode_message(
     const std::string& json);
+
+folly::Expected<std::string, core::McpError> encode(
+    const msg::types::Request& request);
 
 folly::Expected<std::string, core::McpError> encode(
     const msg::types::Response& response);
