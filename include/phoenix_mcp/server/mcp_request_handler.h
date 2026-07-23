@@ -13,7 +13,7 @@
 
 namespace phoenix_mcp::server {
 
-class McpSession;
+class ServerSession;
 
 class McpRequestHandler {
  public:
@@ -32,7 +32,7 @@ class McpRequestHandler {
       ITransport::RequestEnvelope request);
 
  private:
-  std::unique_ptr<McpSession> session_;
+  std::unique_ptr<ServerSession> session_;
 };
 
 }  // namespace phoenix_mcp::server

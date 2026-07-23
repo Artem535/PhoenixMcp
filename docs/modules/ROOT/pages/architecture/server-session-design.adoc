@@ -1,0 +1,299 @@
+# ServerSession State Machine Design
+
+**Issue**: #18 — Refactor ServerSession with proper state machine and transport contract
+
+## Problem
+
+Current `McpSession` has scattered state transitions across `handle_request_async`,
+`try_initialize`, and `handle_notification`. The `Stage` enum exists but transitions
+are not validated, guards are ad-hoc, and there is no formal contract for transport
+envelopes, cancellation, or shutdown.
+
+## Goals
+
+1. Formal state machine with defined transitions and guards
+2. Bounded transport envelopes (Request/Response)
+3. Per-request cancellation via `folly::CancellationSource`
+4. Graceful shutdown with bounded settle period
+5. Per-connection isolation via SessionManager
+
+## Non-goals
+
+- ClientSession (deferred to Client epic)
+- Host role (deferred)
+- HTTP/Streamable transport details (only envelope contract)
+
+---
+
+## State Machine
+
+### Library: HFSM2
+
+- **Package**: `hfsm2` in vcpkg
+- **Why**: Hierarchical FSM, header-only, MIT, zero allocation, no folly conflicts
+- **Alternative considered**: bext-sml2 (flat only, would require manual hierarchy emulation)
+
+### States
+
+Note: issue #18's acceptance criteria lists the lifecycle as
+`Uninitialized → Initialized → Operation → Shutdown`. This design
+intentionally uses a richer, renamed set of states — `Initializing`
+(mid-handshake, distinct from "done initializing"), `Stopping`/`Settled`
+(split so a caller can tell "shutdown requested" from "shutdown complete"),
+plus a `Failed` branch the issue's list didn't call out — because the
+coarser 4-state list doesn't distinguish "handshake in progress" from
+"handshake done" or "asked to stop" from "fully stopped". The transition
+table below is authoritative; treat the issue's list as the informal
+starting point it was refined from, not a literal naming requirement.
+
+```
+[*] → Uninitialized
+Uninitialized → Initializing     [guard: method == "initialize"]
+Initializing   → Operation       [guard: "notifications/initialized" received]
+Initializing   → Failed          [guard: timeout OR invalid method]
+Operation      → Stopping        [guard: close() called OR stdin EOF]
+Failed         → Stopping        [guard: close() called]
+Stopping       → Settled         [guard: pending ops drained OR settle timeout]
+Settled        → [*]
+```
+
+### State struct definitions (HFSM2 type-based states)
+
+```cpp
+// In include/phoenix_mcp/server/session_states.h
+
+namespace phoenix_mcp::server::states {
+
+struct Uninitialized {};
+struct Initializing {
+  std::chrono::steady_clock::time_point deadline;
+};
+struct Operation {};
+struct Failed {
+  std::string reason;
+};
+struct Stopping {
+  std::chrono::steady_clock::time_point settle_deadline;
+};
+struct Settled {};
+
+}  // namespace phoenix_mcp::server::states
+```
+
+### Transition table
+
+```cpp
+// In ServerSession::transition_table()
+using namespace hfsm2;
+using M = Machine<Config<>>;
+
+using S = M::PeerRoot<
+  states::Uninitialized,
+  states::Initializing,
+  states::Operation,
+  states::Failed,
+  states::Stopping,
+  states::Settled
+>;
+
+// Transitions defined via S::MemberList and guard/action functions
+```
+
+### Guards
+
+| From → To | Guard | Action |
+|---|---|---|
+| Uninitialized → Initializing | `request.method == "initialize"` | Store capabilities, set deadline |
+| Initializing → Operation | `notification.method == "notifications/initialized"` | Clear deadline |
+| Initializing → Failed | `now > deadline \|\| invalid_method` | Log error |
+| Operation → Stopping | `close_requested` | Start settle timer |
+| Failed → Stopping | `close_requested` | Start settle timer |
+| Stopping → Settled | `pending_ops == 0 \|\| now > settle_deadline` | Drain remaining ops |
+
+---
+
+## Transport Envelopes
+
+### RequestEnvelope (exists, extend)
+
+```cpp
+struct RequestEnvelope {
+  std::string body;
+  std::unordered_map<std::string, std::string> headers;
+  folly::CancellationToken cancel_token;  // NEW
+};
+```
+
+### ResponseEnvelope (new)
+
+```cpp
+struct ResponseEnvelope {
+  std::string body;
+  std::unordered_map<std::string, std::string> headers;
+  int status_code = 0;  // 0 = success, non-zero = error category
+};
+```
+
+### Handler signature change
+
+```cpp
+// Before
+using Handler = std::function<folly::coro::Task<std::optional<std::string>>(
+    RequestEnvelope)>;
+
+// After
+using Handler = std::function<folly::coro::Task<std::optional<ResponseEnvelope>>(
+    RequestEnvelope)>;
+```
+
+---
+
+## Cancellation
+
+### Per-request CancellationSource
+
+Each incoming request creates a `folly::CancellationSource`. The token is passed
+through `RequestEnvelope` to tool handlers. Remote cancellation
+(`notifications/cancelled`) triggers `CancellationSource::requestCancellation()`.
+
+```cpp
+class ServerSession {
+  // ...
+  folly::CancellationSource cancel_source_;
+};
+```
+
+### Cancellation flow
+
+1. Client sends `notifications/cancelled` with `requestId`
+2. Session looks up active request by ID
+3. Calls `cancel_source_.requestCancellation()`
+4. Tool handler checks `cancel_token.isCancellationRequested()` cooperatively
+5. Returns `McpError` with `ErrorCode::Cancelled`
+
+---
+
+## Graceful Shutdown
+
+### Settle period
+
+- Default: 5 seconds
+- Configurable via `ServerConfig::settle_timeout`
+- On shutdown: new requests rejected, in-flight requests get cancellation signal
+- After settle period: force-cancel remaining requests
+
+```cpp
+struct ServerConfig {
+  std::chrono::milliseconds settle_timeout{5000};
+  size_t max_concurrent_requests = 100;
+};
+```
+
+### Shutdown sequence
+
+1. `close()` called (idempotent — second call is no-op)
+2. State → Stopping
+3. Reject new requests with `ErrorCode::Lifecycle`
+4. Signal cancellation to all active requests
+5. Wait for pending ops to drain OR settle deadline
+6. State → Settled
+7. Cleanup resources
+
+---
+
+## SessionManager
+
+### Responsibilities
+
+- Create per-connection `ServerSession` instances
+- Enforce maximum concurrent sessions
+- Expire idle sessions
+- Deterministic cleanup on shutdown
+
+```cpp
+class SessionManager {
+ public:
+  explicit SessionManager(ServerConfig config);
+
+  // Create session for new connection
+  ServerSession* create_session(std::string connection_id);
+
+  // Remove session on disconnect
+  void remove_session(const std::string& connection_id);
+
+  // Expire idle sessions
+  void expire_idle_sessions();
+
+  // Shutdown all sessions gracefully
+  folly::coro::Task<void> shutdown_all();
+
+ private:
+  ServerConfig config_;
+  std::unordered_map<std::string, std::unique_ptr<ServerSession>> sessions_;
+  mutable std::mutex mutex_;
+};
+```
+
+---
+
+## Migration Plan
+
+### Phase 1: State machine (this PR)
+- [x] Add `hfsm2` to `vcpkg.json`
+- [x] Create `session_states.h` with state types
+- [x] Refactor `McpSession` → `ServerSession` with HFSM2
+- [x] Add transition guards and actions
+- [x] Update tests
+
+Note: HFSM2 transitions aren't table-driven — each state requests a
+transition itself by calling `control.changeTo<Target>()` from its own
+`react()`. `Stopping → Settled` currently fires immediately on `close()`
+(there is no in-flight-request tracking yet), so the real
+"drain pending ops or hit the settle deadline" behavior described below
+lands with Phase 3's `SessionManager` work.
+
+### Phase 2: Envelopes + cancellation
+- [ ] Add `ResponseEnvelope` to `ITransport`
+- [ ] Add `cancel_token` to `RequestEnvelope`
+- [ ] Wire cancellation through tool handlers
+- [ ] Update `StdioTransport` and HTTP transports
+
+### Phase 3: Shutdown + SessionManager
+- [ ] Implement `ServerConfig`
+- [ ] Implement `SessionManager`
+- [ ] Implement graceful shutdown sequence
+- [ ] Add settle period tests
+
+---
+
+## File Layout
+
+```
+include/phoenix_mcp/server/
+  server_session.h           # New public header (replaces mcp_session.h)
+  session_states.h           # HFSM2 state definitions
+  session_manager.h          # SessionManager
+  server_config.h            # ServerConfig
+
+src/phoenix_mcp/server/
+  server_session.cc          # Implementation
+  session_manager.cc         # Implementation
+
+include/phoenix_mcp/transport/
+  i_transport.h              # Updated with ResponseEnvelope
+
+tests/phoenix_mcp/server/
+  server_session_test.cc     # State machine tests
+  session_manager_test.cc    # SessionManager tests
+```
+
+## Open Questions
+
+1. Should `ServerSession` own the `ToolRegistry` or should it be injected?
+   → Current: owned. Keep for now, revisit when Host role is implemented.
+
+2. Should state machine be thread-safe?
+   → Yes, guard with mutex on `process_event()`. HFSM2 itself is not thread-safe.
+
+3. How to handle `notifications/initialized` in the state machine?
+   → As an event that triggers Initializing → Operation transition.

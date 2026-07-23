@@ -6,7 +6,7 @@
 
 #include <folly/coro/BlockingWait.h>
 
-#include "mcp_session.h"
+#include "phoenix_mcp/server/server_session.h"
 #if PXM_WITH_OTEL
 #include <opentelemetry/context/propagation/global_propagator.h>
 #include <opentelemetry/context/runtime_context.h>
@@ -102,7 +102,7 @@ McpRequestHandler::McpRequestHandler(
     msg::types::ServerCapabilities server_capabilities,
     msg::types::Implementation server_info, std::string instruction,
     std::unique_ptr<tool::ToolRegistry> tool_registry)
-    : session_(std::make_unique<McpSession>(
+    : session_(std::make_unique<ServerSession>(
           std::move(server_capabilities), std::move(server_info),
           std::move(instruction), std::move(tool_registry))) {}
 
