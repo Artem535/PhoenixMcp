@@ -113,7 +113,7 @@ std::optional<std::string> McpRequestHandler::handle_json(
   return folly::coro::blockingWait(handle_json_async(request_json));
 }
 
-std::optional<std::string> McpRequestHandler::handle_json(
+std::optional<ITransport::ResponseEnvelope> McpRequestHandler::handle_json(
     const ITransport::RequestEnvelope& request) {
   return folly::coro::blockingWait(handle_json_async(request));
 }
@@ -122,10 +122,14 @@ folly::coro::Task<std::optional<std::string>>
 McpRequestHandler::handle_json_async(std::string request_json) {
   ITransport::RequestEnvelope request;
   request.body = std::move(request_json);
-  co_return co_await handle_json_async(std::move(request));
+  const auto response = co_await handle_json_async(std::move(request));
+  if (!response.has_value()) {
+    co_return std::nullopt;
+  }
+  co_return response->body;
 }
 
-folly::coro::Task<std::optional<std::string>>
+folly::coro::Task<std::optional<ITransport::ResponseEnvelope>>
 McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
 #if PXM_WITH_OTEL
   const auto traceparent_it = request.headers.find("traceparent");
@@ -142,12 +146,14 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
   auto context_guard =
       opentelemetry::context::RuntimeContext::Attach(extracted_context);
 #endif
-  const auto result =
-      co_await session_->handle_input_async(std::move(request.body));
+  const auto result = co_await session_->handle_input_async(
+      std::move(request.body), request.cancel_token);
   if (!result.has_value()) {
     co_return std::nullopt;
   }
 
-  co_return rfl::json::write(result.value());
+  ITransport::ResponseEnvelope response;
+  response.body = rfl::json::write(result.value());
+  co_return response;
 }
 }  // namespace phoenix_mcp::server

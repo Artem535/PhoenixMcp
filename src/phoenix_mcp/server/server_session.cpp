@@ -10,6 +10,51 @@ namespace phoenix_mcp::server {
 
 namespace cnt_error = constants::msg_error;
 
+namespace {
+
+// RAII registration of a per-request CancellationSource: inserted into the
+// session's pending-request map on construction, erased on destruction
+// (including on exceptions), so a request's cancellation entry never
+// outlives the request itself regardless of how it finishes.
+class PendingRequestGuard {
+ public:
+  PendingRequestGuard(
+      std::mutex& mutex,
+      std::map<msg::types::RequestId, folly::CancellationSource>& pending,
+      msg::types::RequestId id)
+      : mutex_(mutex), pending_(pending), id_(std::move(id)) {
+    std::lock_guard lock(mutex_);
+    pending_[id_] = source_;
+  }
+
+  ~PendingRequestGuard() {
+    std::lock_guard lock(mutex_);
+    // Only erase our own entry: if a client reuses a request id while the
+    // first request is still in flight, a second guard may have since
+    // overwritten this one's map slot, and this destructor must not erase
+    // that still-live entry. folly::CancellationSource has no operator==
+    // definition in this folly version, so identity is checked via the
+    // (defined) CancellationToken equality instead.
+    if (const auto it = pending_.find(id_);
+        it != pending_.end() && it->second.getToken() == token()) {
+      pending_.erase(it);
+    }
+  }
+
+  PendingRequestGuard(const PendingRequestGuard&) = delete;
+  PendingRequestGuard& operator=(const PendingRequestGuard&) = delete;
+
+  folly::CancellationToken token() const { return source_.getToken(); }
+
+ private:
+  std::mutex& mutex_;
+  std::map<msg::types::RequestId, folly::CancellationSource>& pending_;
+  msg::types::RequestId id_;
+  folly::CancellationSource source_;
+};
+
+}  // namespace
+
 // clang-format off
 ServerSession::ServerSession(
     msg::types::ServerCapabilities server_capabilities,
@@ -26,16 +71,22 @@ ServerSession::ServerSession(
 // clang-format on
 
 std::optional<rfl::Generic> ServerSession::handle_input(
-    const std::string& request) {
-  return folly::coro::blockingWait(handle_input_async(request));
+    const std::string& request, folly::CancellationToken cancel_token) {
+  return folly::coro::blockingWait(
+      handle_input_async(request, std::move(cancel_token)));
 }
 
 folly::coro::Task<std::optional<rfl::Generic>> ServerSession::handle_input_async(
-    std::string request) {
+    std::string request, folly::CancellationToken cancel_token) {
   if (const auto req = try_serialize_request(request); req.has_value())
-    co_return co_await handle_request_async(*req);
+    co_return co_await handle_request_async(*req, std::move(cancel_token));
 
   if (const auto notif = try_serialize_notification(request); notif.has_value()) {
+    if (notif->method == msg_t::constants::cancel_notification) {
+      handle_cancel_notification(*notif);
+      co_return std::nullopt;
+    }
+
     // Handle notifications based on current state
     std::lock_guard lock(fsm_mutex_);
     if (is_initializing() &&
@@ -49,48 +100,59 @@ folly::coro::Task<std::optional<rfl::Generic>> ServerSession::handle_input_async
   co_return std::nullopt;
 }
 
-rfl::Generic ServerSession::handle_request(const msg::types::Request& request) {
-  return folly::coro::blockingWait(handle_request_async(request));
+rfl::Generic ServerSession::handle_request(
+    const msg::types::Request& request, folly::CancellationToken cancel_token) {
+  return folly::coro::blockingWait(
+      handle_request_async(request, std::move(cancel_token)));
 }
 
 folly::coro::Task<rfl::Generic> ServerSession::handle_request_async(
-    const msg::types::Request& request) {
-  std::lock_guard lock(fsm_mutex_);
+    const msg::types::Request& request, folly::CancellationToken cancel_token) {
+  // The FSM checks/transitions below must stay under fsm_mutex_, but that
+  // lock must not span the `co_await handle_operation_async(...)` at the
+  // bottom: tool execution can hop onto a different executor thread
+  // (ExecutionPolicy::CpuBound/IoBound), and unlocking a std::mutex from a
+  // thread other than the one that locked it is undefined behavior. It would
+  // also serialize every other request behind whichever tool call happens
+  // to be in flight, defeating the point of per-request cancellation.
+  {
+    std::lock_guard lock(fsm_mutex_);
 
-  // Check if we're in a state that accepts requests
-  if (is_uninitialized()) {
-    // Only accept initialize request
-    if (request.method != msg_t::constants::initialize_request) {
-      co_return create_error("Invalid request method", request.id);
+    // Check if we're in a state that accepts requests
+    if (is_uninitialized()) {
+      // Only accept initialize request
+      if (request.method != msg_t::constants::initialize_request) {
+        co_return create_error("Invalid request method", request.id);
+      }
+      fsm_.react(InitializeRequest{});
+      co_return make_initialize_response(request.id);
     }
-    fsm_.react(InitializeRequest{});
-    co_return make_initialize_response(request.id);
-  }
 
-  if (is_initializing()) {
-    if (initialization_deadline_passed()) {
-      fail_initialization("Initialization handshake timed out");
-      co_return create_error("Initialization handshake timed out", request.id,
-                             cnt_error::Code::Invalid_request);
+    if (is_initializing()) {
+      if (initialization_deadline_passed()) {
+        fail_initialization("Initialization handshake timed out");
+        co_return create_error("Initialization handshake timed out",
+                               request.id, cnt_error::Code::Invalid_request);
+      }
+      co_return create_error("Waiting for 'notifications/initialized'",
+                             request.id);
     }
-    co_return create_error("Waiting for 'notifications/initialized'",
-                           request.id);
+
+    if (is_failed()) {
+      co_return create_error("Server is in failed state", request.id);
+    }
+
+    if (is_stopping() || is_settled()) {
+      co_return create_error("Server is shutting down", request.id);
+    }
+
+    if (!is_operation()) {
+      spdlog::error("ServerSession::handle_request| Invalid state");
+      co_return create_error("Something went wrong", request.id);
+    }
   }
 
-  if (is_failed()) {
-    co_return create_error("Server is in failed state", request.id);
-  }
-
-  if (is_stopping() || is_settled()) {
-    co_return create_error("Server is shutting down", request.id);
-  }
-
-  if (is_operation()) {
-    co_return co_await handle_operation_async(request);
-  }
-
-  spdlog::error("ServerSession::handle_request| Invalid state");
-  co_return create_error("Something went wrong", request.id);
+  co_return co_await handle_operation_async(request, std::move(cancel_token));
 }
 
 void ServerSession::close() {
@@ -120,7 +182,7 @@ std::string ServerSession::state_name() const {
 }
 
 folly::coro::Task<rfl::Generic> ServerSession::handle_operation_async(
-    const msg::types::Request& request) {
+    const msg::types::Request& request, folly::CancellationToken cancel_token) {
   if (request.method == msg_t::constants::initialize_request) {
     spdlog::info("ServerSession| Repeated initialize request received.");
     co_return make_initialize_response(request.id);
@@ -137,7 +199,7 @@ folly::coro::Task<rfl::Generic> ServerSession::handle_operation_async(
   }
 
   if (request.method == msg_t::constants::call_tool_request) {
-    co_return co_await call_tool_async(request);
+    co_return co_await call_tool_async(request, std::move(cancel_token));
   }
 
   spdlog::error("ServerSession| Method not found: {}", request.method);
@@ -146,7 +208,7 @@ folly::coro::Task<rfl::Generic> ServerSession::handle_operation_async(
 }
 
 folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
-    const msg::types::Request& request) {
+    const msg::types::Request& request, folly::CancellationToken cancel_token) {
   spdlog::debug("ServerSession::call_tool| Call tool {}",
                 rfl::json::write(request));
 
@@ -164,10 +226,48 @@ folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
   spdlog::debug("ServerSession::call_tool| Call tool, args: {}",
                 rfl::json::write(arguments));
 
-  const auto result =
-      co_await tool_registry_->call_tool_async(name, arguments.value());
+  const PendingRequestGuard guard(cancellations_mutex_, pending_cancellations_,
+                                  request.id);
+  const auto merged_token =
+      folly::cancellation_token_merge(cancel_token, guard.token());
 
-  co_return make_response(result, request.id);
+  try {
+    const auto result = co_await tool_registry_->call_tool_async(
+        name, arguments.value(), merged_token);
+    // A tool may return normally after observing cancellation (or ignore the
+    // token entirely); surface cancellation uniformly here rather than
+    // trusting each tool to encode it in its own result.
+    if (merged_token.isCancellationRequested()) {
+      co_return create_error("Request was cancelled", request.id,
+                             cnt_error::Code::Request_cancelled);
+    }
+    co_return make_response(result, request.id);
+  } catch (const std::exception& e) {
+    spdlog::error("ServerSession::call_tool| Tool '{}' threw: {}", name,
+                  e.what());
+    co_return create_error(std::string("Tool execution failed: ") + e.what(),
+                           request.id, cnt_error::Code::Internal_error);
+  }
+}
+
+void ServerSession::handle_cancel_notification(
+    const msg::types::Notification& notif) {
+  const auto generic = rfl::to_generic(notif);
+  const auto parsed = rfl::from_generic<msg_t::CancelNotification>(generic);
+  if (!parsed.has_value() || !parsed.value().params.has_value()) {
+    spdlog::warn("ServerSession| Malformed 'notifications/cancelled', ignoring");
+    return;
+  }
+
+  const auto& params = parsed.value().params.value();
+  const msg_t::RequestId target_id = params.request_id.value();
+
+  std::lock_guard lock(cancellations_mutex_);
+  if (const auto it = pending_cancellations_.find(target_id);
+      it != pending_cancellations_.end()) {
+    it->second.requestCancellation();
+    spdlog::info("ServerSession| Cancellation requested for in-flight request");
+  }
 }
 
 std::optional<msg::types::Request> ServerSession::try_serialize_request(

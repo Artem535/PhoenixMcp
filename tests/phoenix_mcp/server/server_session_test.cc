@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <thread>
 
@@ -13,13 +15,17 @@ using namespace phoenix_mcp::msg::types;
 
 namespace {
 
-std::unique_ptr<ServerSession> make_session(ServerConfig config = {}) {
+std::unique_ptr<ServerSession> make_session(
+    ServerConfig config = {},
+    std::unique_ptr<phoenix_mcp::tool::ToolRegistry> tool_registry = nullptr) {
   ServerCapabilities capabilities{
       .tools = ToolsCapabilities{.list_changed = false}};
   Implementation info{.name = "test", .version = "0.0.0"};
-  return std::make_unique<ServerSession>(
-      capabilities, info, "instruction",
-      std::make_unique<phoenix_mcp::tool::ToolRegistry>(), config);
+  if (!tool_registry) {
+    tool_registry = std::make_unique<phoenix_mcp::tool::ToolRegistry>();
+  }
+  return std::make_unique<ServerSession>(capabilities, info, "instruction",
+                                         std::move(tool_registry), config);
 }
 
 constexpr auto kInitializeRequest =
@@ -151,4 +157,121 @@ TEST(ServerSessionTest, CloseFromFailedSettles) {
 
   session->close();
   EXPECT_EQ(session->state_name(), "Settled");
+}
+
+namespace {
+
+struct WaitToolInput {
+  int poll_iterations = 200;
+};
+
+}  // namespace
+
+TEST(ServerSessionTest, NotificationsCancelledStopsInFlightTool) {
+  std::atomic<bool> tool_started{false};
+  std::atomic<bool> tool_saw_cancellation{false};
+
+  auto registry = std::make_unique<phoenix_mcp::tool::ToolRegistry>();
+  registry->register_cancellable_tool<WaitToolInput>(
+      "wait_tool", "Waits until cancelled or polling runs out",
+      [&](const WaitToolInput& input, const folly::CancellationToken& token)
+          -> folly::coro::Task<CallToolResult> {
+        tool_started = true;
+        for (int i = 0; i < input.poll_iterations; ++i) {
+          if (token.isCancellationRequested()) {
+            tool_saw_cancellation = true;
+            co_return CallToolResult{
+                .content = {TextContent{.text = "cancelled"}},
+                .is_error = true};
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        co_return CallToolResult{.content = {TextContent{.text = "timed out"}},
+                                 .is_error = true};
+      });
+
+  const auto session = make_session({}, std::move(registry));
+  initialize(*session);
+
+  std::optional<rfl::Generic> call_result;
+  std::thread worker([&] {
+    call_result = session->handle_input(
+        R"({"jsonrpc":"2.0","method":"tools/call","id":42,)"
+        R"("params":{"name":"wait_tool","arguments":{"poll_iterations":200}}})");
+  });
+
+  for (int i = 0; i < 200 && !tool_started; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  if (!tool_started) {
+    worker.join();
+    FAIL() << "tool never started polling";
+  }
+
+  session->handle_input(
+      R"({"jsonrpc":"2.0","method":"notifications/cancelled",)"
+      R"("params":{"requestId":42}})");
+
+  worker.join();
+
+  EXPECT_TRUE(tool_saw_cancellation);
+  ASSERT_TRUE(call_result.has_value());
+  const auto response_json = rfl::json::write(*call_result);
+  EXPECT_NE(response_json.find("cancelled"), std::string::npos);
+}
+
+TEST(ServerSessionTest, ConcurrentPingIsNotBlockedByInFlightToolCall) {
+  std::atomic<bool> tool_started{false};
+  std::atomic<bool> release_tool{false};
+
+  auto registry = std::make_unique<phoenix_mcp::tool::ToolRegistry>();
+  registry->register_cancellable_tool<WaitToolInput>(
+      "wait_tool", "Blocks until released",
+      [&](const WaitToolInput&, const folly::CancellationToken&)
+          -> folly::coro::Task<CallToolResult> {
+        tool_started = true;
+        while (!release_tool) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        co_return CallToolResult{.content = {TextContent{.text = "done"}},
+                                 .is_error = false};
+      });
+
+  const auto session = make_session({}, std::move(registry));
+  initialize(*session);
+
+  std::thread worker([&] {
+    session->handle_input(
+        R"({"jsonrpc":"2.0","method":"tools/call","id":50,)"
+        R"("params":{"name":"wait_tool","arguments":{"poll_iterations":0}}})");
+  });
+
+  for (int i = 0; i < 200 && !tool_started; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  if (!tool_started) {
+    release_tool = true;
+    worker.join();
+    FAIL() << "tool never started";
+  }
+
+  // If fsm_mutex_ were (incorrectly) held across the in-flight tool call's
+  // co_await, this ping would block until the tool above is released. Run
+  // it on its own thread with a bounded wait so a regression fails fast
+  // instead of hanging the test suite.
+  std::promise<std::optional<rfl::Generic>> ping_promise;
+  auto ping_future = ping_promise.get_future();
+  std::thread ping_thread([&] {
+    ping_promise.set_value(
+        session->handle_input(R"({"jsonrpc":"2.0","method":"ping","id":51})"));
+  });
+
+  const auto ping_status = ping_future.wait_for(std::chrono::milliseconds(500));
+  release_tool = true;
+  worker.join();
+  ping_thread.join();
+
+  ASSERT_EQ(ping_status, std::future_status::ready)
+      << "ping was blocked behind the in-flight tool call";
+  ASSERT_TRUE(ping_future.get().has_value());
 }

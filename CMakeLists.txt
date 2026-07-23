@@ -15,13 +15,25 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(PhoenixMcpOptions)
-include(PhoenixMcpDependencies)
-include(PhoenixMcpWarnings)
-include(PhoenixMcpSanitizers)
 
+# Must run before any target_include_directories() call that references
+# CMAKE_INSTALL_INCLUDEDIR (e.g. via $<INSTALL_INTERFACE:...>): on a fresh
+# build directory that variable is otherwise unset until this module runs,
+# silently producing an empty INSTALL_INTERFACE and breaking exported
+# targets' include paths for downstream consumers.
+include(GNUInstallDirs)
+
+# Must run before PhoenixMcpDependencies: that module gates
+# find_package(GTest) behind `if(BUILD_TESTING)`, and BUILD_TESTING is only
+# defined once CTest is included (on a fresh build directory it's otherwise
+# unset here, silently skipping the GTest lookup).
 set(BUILD_TESTING ${PHOENIX_MCP_BUILD_TESTS} CACHE BOOL
     "Build the CTest test suite" FORCE)
 include(CTest)
+
+include(PhoenixMcpDependencies)
+include(PhoenixMcpWarnings)
+include(PhoenixMcpSanitizers)
 include(CPack)
 
 if(PHOENIX_MCP_ENABLE_CLANG_TIDY)
@@ -153,8 +165,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Install / export
 # ---------------------------------------------------------------------------
-include(GNUInstallDirs)
-
 install(DIRECTORY include/phoenix_mcp
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
   FILES_MATCHING PATTERN "*.h")

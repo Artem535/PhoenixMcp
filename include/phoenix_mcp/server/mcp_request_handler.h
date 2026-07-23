@@ -26,10 +26,10 @@ class McpRequestHandler {
   std::optional<std::string> handle_json(const std::string& request_json);
   folly::coro::Task<std::optional<std::string>> handle_json_async(
       std::string request_json);
-  std::optional<std::string> handle_json(
+  std::optional<ITransport::ResponseEnvelope> handle_json(
       const ITransport::RequestEnvelope& request);
-  folly::coro::Task<std::optional<std::string>> handle_json_async(
-      ITransport::RequestEnvelope request);
+  folly::coro::Task<std::optional<ITransport::ResponseEnvelope>>
+  handle_json_async(ITransport::RequestEnvelope request);
 
  private:
   std::unique_ptr<ServerSession> session_;

@@ -253,10 +253,33 @@ transition itself by calling `control.changeTo<Target>()` from its own
 lands with Phase 3's `SessionManager` work.
 
 ### Phase 2: Envelopes + cancellation
-- [ ] Add `ResponseEnvelope` to `ITransport`
-- [ ] Add `cancel_token` to `RequestEnvelope`
-- [ ] Wire cancellation through tool handlers
-- [ ] Update `StdioTransport` and HTTP transports
+- [x] Add `ResponseEnvelope` to `ITransport`
+- [x] Add `cancel_token` to `RequestEnvelope`
+- [x] Wire cancellation through tool handlers
+- [x] Update `StdioTransport` and HTTP transports
+
+Cancellation is tracked per-request, not per-session: `ServerSession` keeps a
+`std::map<RequestId, folly::CancellationSource>` guarded by a mutex, with a
+RAII `PendingRequestGuard` registering/erasing each entry around the
+in-flight `tools/call` handling. A `notifications/cancelled` for a given
+`requestId` looks up and fires that source; the transport-level
+`RequestEnvelope::cancel_token` is merged in via
+`folly::cancellation_token_merge` so either the client's explicit cancel
+notification or a transport-level disconnect (once a transport implements
+that) can stop an in-flight tool call. Once the merged token observes
+cancellation, the response is normalized to a JSON-RPC error (`-32800`,
+matching the LSP/JSON-RPC convention for "request cancelled") regardless of
+what the tool itself returned.
+
+`fsm_mutex_` guards only the state checks/transitions in
+`handle_request_async`, not the `co_await` into tool execution: holding it
+across that suspension would risk unlocking a `std::mutex` from a different
+thread than the one that locked it (tool execution can hop onto the
+CPU/IO executor) and would serialize every other request behind whichever
+tool call happens to be in flight. Verified with concurrent tests
+(`NotificationsCancelledStopsInFlightTool`,
+`ConcurrentPingIsNotBlockedByInFlightToolCall`) and a live end-to-end run of
+the Drogon HTTP transport showing genuinely parallel tool calls.
 
 ### Phase 3: Shutdown + SessionManager
 - [ ] Implement `ServerConfig`

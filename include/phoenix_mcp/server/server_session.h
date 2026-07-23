@@ -2,11 +2,13 @@
 #define PHOENIX_MCP_SERVER_SERVER_SESSION_H_
 
 #include <chrono>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 
+#include <folly/CancellationToken.h>
 #include <folly/coro/Task.h>
 #include <spdlog/spdlog.h>
 
@@ -46,16 +48,22 @@ class ServerSession {
                          ServerConfig config = {});
 
   /// @brief Handle raw JSON input (request or notification)
+  /// @param cancel_token Transport-level cancellation (e.g. client
+  ///        disconnect); merged with any protocol-level cancellation
+  ///        requested later via `notifications/cancelled`.
   /// @return Response JSON or nullopt for notifications
-  std::optional<rfl::Generic> handle_input(const std::string& request);
+  std::optional<rfl::Generic> handle_input(
+      const std::string& request, folly::CancellationToken cancel_token = {});
   folly::coro::Task<std::optional<rfl::Generic>> handle_input_async(
-      std::string request);
+      std::string request, folly::CancellationToken cancel_token = {});
 
   /// @brief Handle structured request
   /// @return Response in rfl::Generic format
-  rfl::Generic handle_request(const msg::types::Request& request);
+  rfl::Generic handle_request(const msg::types::Request& request,
+                              folly::CancellationToken cancel_token = {});
   folly::coro::Task<rfl::Generic> handle_request_async(
-      const msg::types::Request& request);
+      const msg::types::Request& request,
+      folly::CancellationToken cancel_token = {});
 
   /// @brief Initiate graceful shutdown (idempotent)
   void close();
@@ -86,12 +94,24 @@ class ServerSession {
   mutable std::mutex fsm_mutex_;
   SessionFSM::Instance fsm_;
 
+  // ---- Cancellation ----
+  // One CancellationSource per in-flight request, keyed by request id, so
+  // `notifications/cancelled` can cancel the specific request it names
+  // without affecting any other request the session happens to be handling
+  // concurrently (HTTP transports can dispatch overlapping requests into the
+  // same session even before Phase 3's per-connection SessionManager lands).
+  std::mutex cancellations_mutex_;
+  std::map<msg::types::RequestId, folly::CancellationSource>
+      pending_cancellations_;
+
+  void handle_cancel_notification(const msg::types::Notification& notif);
+
   // ---- Internal handlers ----
   folly::coro::Task<rfl::Generic> handle_operation_async(
-      const msg::types::Request& request);
+      const msg::types::Request& request, folly::CancellationToken cancel_token);
 
   folly::coro::Task<rfl::Generic> call_tool_async(
-      const msg::types::Request& request);
+      const msg::types::Request& request, folly::CancellationToken cancel_token);
 
   // ---- Helpers ----
   static OptionalRequest try_serialize_request(const std::string& request);

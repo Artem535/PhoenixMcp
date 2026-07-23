@@ -15,7 +15,8 @@ msg::types::CallToolResult ToolRegistry::call_tool(const std::string& name,
 }
 
 folly::coro::Task<msg::types::CallToolResult> ToolRegistry::call_tool_async(
-    const std::string& name, const rfl::Generic& params) {
+    const std::string& name, const rfl::Generic& params,
+    folly::CancellationToken cancel_token) {
   // Find the tool in the registry
   const auto& tool = tools_.find(name);
   if (tool == tools_.end()) {
@@ -24,7 +25,7 @@ folly::coro::Task<msg::types::CallToolResult> ToolRegistry::call_tool_async(
   }
 
   // Call the tool
-  co_return co_await tool->second(params);
+  co_return co_await tool->second(params, cancel_token);
 }
 
 std::vector<msg::types::Tool> ToolRegistry::get_tool_list() {
