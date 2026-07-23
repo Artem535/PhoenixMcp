@@ -6,6 +6,7 @@
 #include "phoenix_mcp/server/mcp_server.h"
 #include "phoenix_mcp/server/server.h"
 #include "phoenix_mcp/server/server_session.h"
+#include "phoenix_mcp/server/session_manager.h"
 #include "phoenix_mcp/server/session_states.h"
 #include "phoenix_mcp/tool_registry/tool_registry.h"
 #include "phoenix_mcp/tool_registry/utils.h"

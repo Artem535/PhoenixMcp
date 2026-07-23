@@ -184,20 +184,49 @@ class ServerSession {
 
 ```cpp
 struct ServerConfig {
+  std::chrono::milliseconds init_timeout{5000};
   std::chrono::milliseconds settle_timeout{5000};
-  size_t max_concurrent_requests = 100;
 };
 ```
+
+`idle_timeout`/`max_sessions` are NOT on `ServerConfig`: they're
+`SessionManager`-only policy (see below), not something `ServerSession`
+itself reads. Putting them on the same struct a `SessionFactory` closure
+independently uses to build each session would let the two drift — the
+manager's idea of `max_sessions` has nothing to do with how any individual
+session is constructed.
 
 ### Shutdown sequence
 
 1. `close()` called (idempotent — second call is no-op)
 2. State → Stopping
-3. Reject new requests with `ErrorCode::Lifecycle`
-4. Signal cancellation to all active requests
-5. Wait for pending ops to drain OR settle deadline
+3. Reject new requests with a JSON-RPC error (already true since Phase 1/2:
+   `is_stopping() || is_settled()` in `handle_request_async`)
+4. Signal cancellation to all active requests (every `folly::CancellationSource`
+   still in `pending_cancellations_` — Phase 2's per-request map)
+5. Wait for pending ops to drain OR settle deadline (`close()` polls
+   `pending_operation_count_` against `Stopping::settle_deadline`)
 6. State → Settled
-7. Cleanup resources
+7. Cleanup resources (nothing extra to release yet — `ToolRegistry` and
+   `folly::CancellationSource`s clean up via RAII)
+
+`close()` stays a synchronous, blocking call rather than a coroutine: it's
+never called from inside a coroutine today (only directly by tests and by
+`SessionManager`), and keeping it synchronous means "no pending ops" still
+returns immediately with no behavior change from Phase 1/2.
+
+`pending_operation_count_` (not `pending_cancellations_`) is what `close()`
+drains against. `pending_cancellations_` is populated only inside
+`call_tool_async`, well after `handle_request_async` has already released
+`fsm_mutex_` — draining against it alone left a real race: a request could
+pass the `is_operation()` admission check and then, before it reached
+`call_tool_async`, have `close()` observe an empty map and settle out from
+under it. `pending_operation_count_` is a plain `std::atomic<int>` bumped by
+a `PendingOperationGuard` constructed *inside* the same `fsm_mutex_` critical
+section as the admission check (see `handle_request_async`), so there is no
+window where a request is admitted but uncounted. It also covers every
+operation type (`ping`, `tools/list`, repeated `initialize`, `tools/call`),
+not just tool calls.
 
 ---
 
@@ -206,33 +235,72 @@ struct ServerConfig {
 ### Responsibilities
 
 - Create per-connection `ServerSession` instances
-- Enforce maximum concurrent sessions
-- Expire idle sessions
-- Deterministic cleanup on shutdown
+- Enforce maximum concurrent sessions (`max_sessions`)
+- Expire idle sessions (`idle_timeout`, reset via `touch_session()`)
+- Deterministic cleanup on shutdown (`shutdown_all()`)
 
 ```cpp
 class SessionManager {
  public:
-  explicit SessionManager(ServerConfig config);
+  using SessionFactory = std::function<std::unique_ptr<ServerSession>()>;
 
-  // Create session for new connection
-  ServerSession* create_session(std::string connection_id);
+  explicit SessionManager(SessionFactory factory,
+                          std::chrono::milliseconds idle_timeout = {},
+                          size_t max_sessions = 0);
 
-  // Remove session on disconnect
+  // Create session for new connection; nullptr if the id is already in use,
+  // max_sessions would be exceeded, or shutdown_all() already ran.
+  std::shared_ptr<ServerSession> create_session(const std::string& connection_id);
+
+  // Look up an existing session; nullptr if not found.
+  std::shared_ptr<ServerSession> get_session(const std::string& connection_id);
+
+  // Reset a session's idle timer.
+  void touch_session(const std::string& connection_id);
+
+  // Gracefully close and remove a session (e.g. on disconnect).
   void remove_session(const std::string& connection_id);
 
-  // Expire idle sessions
+  // Gracefully close and remove any session idle past idle_timeout.
   void expire_idle_sessions();
 
-  // Shutdown all sessions gracefully
+  // Gracefully close every session and remove it from the manager.
   folly::coro::Task<void> shutdown_all();
 
  private:
-  ServerConfig config_;
-  std::unordered_map<std::string, std::unique_ptr<ServerSession>> sessions_;
+  SessionFactory factory_;
+  std::chrono::milliseconds idle_timeout_;
+  size_t max_sessions_;
   mutable std::mutex mutex_;
+  std::unordered_map<std::string, /* session + last_active */> sessions_;
+  bool stopped_ = false;
 };
 ```
+
+Construction takes a `SessionFactory` rather than the raw
+capabilities/instruction/`ToolRegistry` construction args `ServerSession`
+itself needs: those are usually identical across sessions of the same
+server, but `ToolRegistry` is owned per-session (`unique_ptr`), so something
+has to produce a fresh one per connection. The caller closes over whatever's
+shared; `SessionManager` only needs to know *when* to build a session, not
+how.
+
+Sessions are held as `std::shared_ptr`, not `unique_ptr`: `get_session()`/
+`create_session()` hand out a handle callers may still be using when another
+thread calls `remove_session()`/`expire_idle_sessions()`/`shutdown_all()`.
+With `unique_ptr` that would be a use-after-free once real concurrent
+transports are wired in; `shared_ptr` keeps the session alive until every
+handle (including the manager's own, briefly, while `close()` runs) is gone.
+
+`stopped_` is set under the same lock `shutdown_all()` snapshots `sessions_`
+under, so a `create_session()` racing a shutdown either inserts before that
+point (and gets closed) or observes `stopped_` and refuses to insert at all
+— no session can slip past both and be silently left running.
+
+Not wired into any transport yet — `McpRequestHandler` still owns a single,
+process-lifetime `ServerSession`. `SessionManager` is a tested, standalone
+building block for that; routing each connection through it is follow-up
+work, not part of this phase.
 
 ---
 
@@ -282,10 +350,30 @@ tool call happens to be in flight. Verified with concurrent tests
 the Drogon HTTP transport showing genuinely parallel tool calls.
 
 ### Phase 3: Shutdown + SessionManager
-- [ ] Implement `ServerConfig`
-- [ ] Implement `SessionManager`
-- [ ] Implement graceful shutdown sequence
-- [ ] Add settle period tests
+- [x] Implement `ServerConfig` (`init_timeout`/`settle_timeout` already
+      existed from Phase 1; idle/session-limit policy lives on
+      `SessionManager` instead, not added to `ServerConfig` — see below)
+- [x] Implement `SessionManager`
+- [x] Implement graceful shutdown sequence
+- [x] Add settle period tests
+
+`ServerSession::close()` now does real draining instead of settling
+immediately: it requests cancellation on every entry in
+`pending_cancellations_`, then blocks (polling every 5ms) until
+`pending_operation_count_` reaches zero or `Stopping::settle_deadline`
+passes, whichever comes first — only then does it react `SettleComplete{}`.
+Verified with `CloseWaitsForInFlightToolToDrainThenSettles` (a cooperative
+tool drains well under a generous settle timeout) and
+`CloseForceSettlesAfterSettleTimeoutElapses` (a tool that ignores
+cancellation doesn't stop `close()` from force-settling once the deadline
+passes). See "Shutdown sequence" above for why draining is counted via
+`pending_operation_count_` rather than `pending_cancellations_.size()` — the
+latter alone had a real admitted-but-uncounted race, caught in code review
+before this phase was committed.
+
+`SessionManager` is implemented and unit-tested in isolation
+(`session_manager_test.cc`) but not yet wired into `McpRequestHandler` or any
+transport — see the note under "SessionManager" above.
 
 ---
 
@@ -293,20 +381,20 @@ the Drogon HTTP transport showing genuinely parallel tool calls.
 
 ```
 include/phoenix_mcp/server/
-  server_session.h           # New public header (replaces mcp_session.h)
+  server_session.h           # ServerSession + ServerConfig
   session_states.h           # HFSM2 state definitions
   session_manager.h          # SessionManager
-  server_config.h            # ServerConfig
 
 src/phoenix_mcp/server/
-  server_session.cc          # Implementation
-  session_manager.cc         # Implementation
+  server_session.cpp         # Implementation
+  session_states.cpp         # Implementation
+  session_manager.cpp        # Implementation
 
 include/phoenix_mcp/transport/
-  i_transport.h              # Updated with ResponseEnvelope
+  i_transport.h              # ResponseEnvelope + cancel_token
 
 tests/phoenix_mcp/server/
-  server_session_test.cc     # State machine tests
+  server_session_test.cc     # State machine + cancellation + shutdown tests
   session_manager_test.cc    # SessionManager tests
 ```
 

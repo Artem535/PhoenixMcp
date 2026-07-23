@@ -1,6 +1,7 @@
 #ifndef PHOENIX_MCP_SERVER_SERVER_SESSION_H_
 #define PHOENIX_MCP_SERVER_SERVER_SESSION_H_
 
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <memory>
@@ -37,8 +38,9 @@ struct ServerConfig {
 /// Error path: Initializing → Failed → Stopping → Settled
 ///
 /// One instance is meant to back a single connection; enforcing that
-/// one-per-connection is the SessionManager's job (Phase 3 — not yet wired
-/// up), so callers must not share one ServerSession across connections yet.
+/// one-per-connection is `SessionManager`'s job. `SessionManager` doesn't
+/// wire itself into any transport yet, so callers must not share one
+/// ServerSession across connections themselves.
 class ServerSession {
  public:
   explicit ServerSession(msg::types::ServerCapabilities server_capabilities,
@@ -94,12 +96,24 @@ class ServerSession {
   mutable std::mutex fsm_mutex_;
   SessionFSM::Instance fsm_;
 
+  // Number of requests currently past the is_operation() admission check in
+  // handle_request_async and not yet done executing. Incremented/decremented
+  // by a PendingOperationGuard constructed *inside* the same fsm_mutex_
+  // critical section as that check, so close()'s drain wait can never
+  // observe "nothing pending" while a request that was already admitted
+  // hasn't started running yet (that race existed when draining looked at
+  // pending_cancellations_ alone, since that map is only populated later,
+  // inside call_tool_async).
+  std::atomic<int> pending_operation_count_{0};
+
   // ---- Cancellation ----
-  // One CancellationSource per in-flight request, keyed by request id, so
+  // One CancellationSource per in-flight tools/call, keyed by request id, so
   // `notifications/cancelled` can cancel the specific request it names
   // without affecting any other request the session happens to be handling
-  // concurrently (HTTP transports can dispatch overlapping requests into the
-  // same session even before Phase 3's per-connection SessionManager lands).
+  // concurrently. Other operation types (ping, tools/list) have no
+  // per-request cancellation source — they're synchronous and never
+  // suspend, so there's nothing useful to cancel — but they're still
+  // counted in pending_operation_count_ above for drain purposes.
   std::mutex cancellations_mutex_;
   std::map<msg::types::RequestId, folly::CancellationSource>
       pending_cancellations_;

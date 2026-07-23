@@ -52,6 +52,7 @@ set(phoenix_mcp_sources
     src/phoenix_mcp/server/mcp_request_handler.cpp
     src/phoenix_mcp/server/server_session.cpp
     src/phoenix_mcp/server/session_states.cpp
+    src/phoenix_mcp/server/session_manager.cpp
     src/phoenix_mcp/server/server.cpp
     src/phoenix_mcp/tool_registry/tool_registry.cpp)
 
@@ -223,9 +224,15 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_server_session_test
     PRIVATE PhoenixMcp::Server GTest::gtest_main)
 
+  add_executable(phoenix_mcp_session_manager_test
+    tests/phoenix_mcp/server/session_manager_test.cc)
+  target_link_libraries(phoenix_mcp_session_manager_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
   gtest_discover_tests(phoenix_mcp_mcp_error_test)
   gtest_discover_tests(phoenix_mcp_server_session_test)
+  gtest_discover_tests(phoenix_mcp_session_manager_test)
 
   add_test(
     NAME phoenix_mcp_public_headers

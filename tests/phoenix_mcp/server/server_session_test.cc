@@ -275,3 +275,103 @@ TEST(ServerSessionTest, ConcurrentPingIsNotBlockedByInFlightToolCall) {
       << "ping was blocked behind the in-flight tool call";
   ASSERT_TRUE(ping_future.get().has_value());
 }
+
+TEST(ServerSessionTest, CloseWaitsForInFlightToolToDrainThenSettles) {
+  std::atomic<bool> tool_started{false};
+  std::atomic<bool> tool_saw_cancellation{false};
+
+  auto registry = std::make_unique<phoenix_mcp::tool::ToolRegistry>();
+  registry->register_cancellable_tool<WaitToolInput>(
+      "wait_tool", "Waits until cancelled or polling runs out",
+      [&](const WaitToolInput& input, const folly::CancellationToken& token)
+          -> folly::coro::Task<CallToolResult> {
+        tool_started = true;
+        for (int i = 0; i < input.poll_iterations; ++i) {
+          if (token.isCancellationRequested()) {
+            tool_saw_cancellation = true;
+            co_return CallToolResult{
+                .content = {TextContent{.text = "cancelled"}},
+                .is_error = true};
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        co_return CallToolResult{.content = {TextContent{.text = "timed out"}},
+                                 .is_error = true};
+      });
+
+  ServerConfig config;
+  config.settle_timeout = std::chrono::milliseconds(2000);
+  const auto session = make_session(config, std::move(registry));
+  initialize(*session);
+
+  std::thread worker([&] {
+    session->handle_input(
+        R"({"jsonrpc":"2.0","method":"tools/call","id":60,)"
+        R"("params":{"name":"wait_tool","arguments":{"poll_iterations":200}}})");
+  });
+
+  for (int i = 0; i < 200 && !tool_started; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  if (!tool_started) {
+    worker.join();
+    FAIL() << "tool never started";
+  }
+
+  // close() should signal cancellation to the in-flight tool call and return
+  // once it drains, well before the (generous) 2s settle timeout.
+  const auto started_at = std::chrono::steady_clock::now();
+  session->close();
+  const auto elapsed = std::chrono::steady_clock::now() - started_at;
+
+  worker.join();
+
+  EXPECT_EQ(session->state_name(), "Settled");
+  EXPECT_TRUE(tool_saw_cancellation);
+  EXPECT_LT(elapsed, std::chrono::milliseconds(1000));
+}
+
+TEST(ServerSessionTest, CloseForceSettlesAfterSettleTimeoutElapses) {
+  std::atomic<bool> tool_started{false};
+
+  auto registry = std::make_unique<phoenix_mcp::tool::ToolRegistry>();
+  registry->register_cancellable_tool<WaitToolInput>(
+      "stubborn_tool", "Ignores cancellation for a fixed duration",
+      [&](const WaitToolInput& input, const folly::CancellationToken&)
+          -> folly::coro::Task<CallToolResult> {
+        tool_started = true;
+        for (int i = 0; i < input.poll_iterations; ++i) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        co_return CallToolResult{.content = {TextContent{.text = "finished"}},
+                                 .is_error = false};
+      });
+
+  ServerConfig config;
+  config.settle_timeout = std::chrono::milliseconds(50);
+  const auto session = make_session(config, std::move(registry));
+  initialize(*session);
+
+  std::thread worker([&] {
+    session->handle_input(
+        R"({"jsonrpc":"2.0","method":"tools/call","id":61,)"
+        R"("params":{"name":"stubborn_tool","arguments":{"poll_iterations":40}}})");
+  });
+
+  for (int i = 0; i < 200 && !tool_started; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  if (!tool_started) {
+    worker.join();
+    FAIL() << "tool never started";
+  }
+
+  // The tool ignores cancellation and runs for ~200ms; close() must not wait
+  // that long — it force-settles once the 50ms settle deadline passes.
+  session->close();
+  EXPECT_EQ(session->state_name(), "Settled")
+      << "close() should force-settle once the settle deadline passes, even "
+         "with a tool still running";
+
+  worker.join();
+}

@@ -1,5 +1,7 @@
 #include "phoenix_mcp/server/server_session.h"
 
+#include <chrono>
+#include <thread>
 #include <utility>
 
 #include <folly/coro/BlockingWait.h>
@@ -51,6 +53,26 @@ class PendingRequestGuard {
   std::map<msg::types::RequestId, folly::CancellationSource>& pending_;
   msg::types::RequestId id_;
   folly::CancellationSource source_;
+};
+
+// RAII bump of the "operation in flight" counter close() drains against.
+// Must be constructed inside the same fsm_mutex_ critical section as the
+// is_operation() admission check (see handle_request_async) so there is no
+// window where a request has been admitted but isn't yet accounted for.
+class PendingOperationGuard {
+ public:
+  explicit PendingOperationGuard(std::atomic<int>& counter)
+      : counter_(counter) {
+    counter_.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  ~PendingOperationGuard() { counter_.fetch_sub(1, std::memory_order_relaxed); }
+
+  PendingOperationGuard(const PendingOperationGuard&) = delete;
+  PendingOperationGuard& operator=(const PendingOperationGuard&) = delete;
+
+ private:
+  std::atomic<int>& counter_;
 };
 
 }  // namespace
@@ -115,6 +137,7 @@ folly::coro::Task<rfl::Generic> ServerSession::handle_request_async(
   // thread other than the one that locked it is undefined behavior. It would
   // also serialize every other request behind whichever tool call happens
   // to be in flight, defeating the point of per-request cancellation.
+  std::optional<PendingOperationGuard> op_guard;
   {
     std::lock_guard lock(fsm_mutex_);
 
@@ -150,17 +173,47 @@ folly::coro::Task<rfl::Generic> ServerSession::handle_request_async(
       spdlog::error("ServerSession::handle_request| Invalid state");
       co_return create_error("Something went wrong", request.id);
     }
+
+    // Counted from here (still holding fsm_mutex_) so close()'s drain wait
+    // can never see zero pending operations while this request is about to
+    // start running.
+    op_guard.emplace(pending_operation_count_);
   }
 
   co_return co_await handle_operation_async(request, std::move(cancel_token));
 }
 
 void ServerSession::close() {
-  std::lock_guard lock(fsm_mutex_);
-  if (is_operation() || is_failed()) {
+  std::chrono::steady_clock::time_point settle_deadline;
+  {
+    std::lock_guard lock(fsm_mutex_);
+    if (!is_operation() && !is_failed()) {
+      return;  // Idempotent: no-op if never started or already shutting down.
+    }
     fsm_.react(ShutdownRequest{});
-    // No in-flight-request tracking yet (that lands with the SessionManager
-    // work in Phase 3), so there is nothing to drain — settle immediately.
+    settle_deadline = fsm_.access<states::Stopping>().settle_deadline;
+  }
+
+  // Signal every in-flight tools/call so cooperative tools can stop early,
+  // then block (this call is synchronous, not a coroutine) until every
+  // admitted operation finishes or the settle deadline passes — whichever
+  // comes first. pending_operation_count_ (not pending_cancellations_,
+  // which only covers tools/call) is the drain signal, since it's counted
+  // from the same critical section as the admission check.
+  {
+    std::lock_guard lock(cancellations_mutex_);
+    for (auto& [id, source] : pending_cancellations_) {
+      source.requestCancellation();
+    }
+  }
+
+  while (pending_operation_count_.load(std::memory_order_relaxed) > 0 &&
+         std::chrono::steady_clock::now() < settle_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  std::lock_guard lock(fsm_mutex_);
+  if (is_stopping()) {
     fsm_.react(SettleComplete{});
   }
 }
