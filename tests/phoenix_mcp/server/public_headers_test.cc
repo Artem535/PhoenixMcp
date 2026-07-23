@@ -1,4 +1,5 @@
 #include "phoenix_mcp/compat/pxm.h"
+#include "phoenix_mcp/core/error.h"
 #include "phoenix_mcp/core/runtime.h"
 #include "phoenix_mcp/protocol/message_types.h"
 #include "phoenix_mcp/server/mcp_request_handler.h"
