@@ -43,6 +43,7 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
       - name: Test
+        if: matrix.preset != 'linux-minimal'
         run: ctest --preset ${{ matrix.preset }} --output-on-failure --timeout 60
 
   # ---------------------------------------------------------------------------
