@@ -79,6 +79,14 @@ target_compile_definitions(phoenix_mcp_implementation
 target_link_libraries(phoenix_mcp_implementation
   PUBLIC ${PHOENIX_MCP_CORE_DEPENDENCIES})
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # Clang linking against libstdc++ does not auto-link libatomic the way GCC
+  # does; some std::atomic<T>::is_lock_free() calls (folly pulls these in)
+  # need it at link time, or every consuming executable fails with undefined
+  # references to __atomic_is_lock_free. PUBLIC so it propagates to consumers.
+  target_link_libraries(phoenix_mcp_implementation PUBLIC atomic)
+endif()
+
 if(PHOENIX_MCP_ENABLE_DROGON)
   target_link_libraries(phoenix_mcp_implementation
                         PRIVATE ${PHOENIX_MCP_DROGON_DEPENDENCIES})
