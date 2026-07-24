@@ -1,5 +1,10 @@
 #include "drogon_transport.h"
 
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <string>
+
 #include <folly/coro/BlockingWait.h>
 #include <spdlog/spdlog.h>
 
@@ -11,6 +16,37 @@
 #endif
 
 namespace phoenix_mcp::server {
+
+#if PXM_HAS_DROGON
+namespace {
+
+// Derives a stable per-TCP-connection key so repeated requests on the same
+// (keep-alive) connection route to the same ServerSession. There is no MCP
+// session-ID concept yet (that's Streamable HTTP, a later task).
+//
+// This deliberately does NOT use trantor::TcpConnection::setContext/
+// getContext: that slot is a single shared `shared_ptr<void>` per
+// connection, and Drogon itself (or other middleware) may already be using
+// it for its own bookkeeping — reinterpreting whatever is stored there as a
+// std::string via getContext<std::string>() reads garbage and corrupts
+// memory (verified: this crashed with std::bad_alloc when tried). The peer
+// address (ip:port) is a genuine, already-exposed-for-this-purpose identity
+// for the connection, so it's used instead.
+std::string connection_id_for(const drogon::HttpRequestPtr& req) {
+  auto conn = req->getConnectionPtr().lock();
+  if (!conn) {
+    // No connection object available (e.g. some test doubles) — fall back
+    // to a fresh id per request rather than crashing; this only means such
+    // callers won't get session reuse across requests.
+    static std::atomic<uint64_t> next_fallback_id{0};
+    return "drogon-fallback-" +
+           std::to_string(next_fallback_id.fetch_add(1));
+  }
+  return "drogon-" + conn->peerAddr().toIpPort();
+}
+
+}  // namespace
+#endif
 
 DrogonTransport::DrogonTransport() : DrogonTransport(Config{}) {}
 
@@ -65,6 +101,7 @@ int DrogonTransport::run(Handler on_message) {
         for (const auto& [header_name, header_value] : req->getHeaders()) {
           request.headers.emplace(header_name, header_value);
         }
+        request.connection_id = connection_id_for(req);
 
         std::move(on_message(std::move(request)))
             .scheduleOn(runtime->cpu_executor())

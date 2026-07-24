@@ -13,8 +13,16 @@
 
 namespace phoenix_mcp::server {
 
-class ServerSession;
+class SessionManager;
 
+/// @brief Dispatches transport requests to per-connection `ServerSession`s.
+///
+/// Backed by a `SessionManager` keyed on `RequestEnvelope::connection_id`, so
+/// every distinct connection gets its own session instead of one shared,
+/// process-lifetime session. Transports that only ever serve a single
+/// connection per process (stdio) simply never set `connection_id`; that's
+/// treated as one shared default connection rather than "no session" — the
+/// same `SessionManager`-backed code path handles it, there is no bypass.
 class McpRequestHandler {
  public:
   McpRequestHandler(msg::types::ServerCapabilities server_capabilities,
@@ -32,7 +40,7 @@ class McpRequestHandler {
   handle_json_async(ITransport::RequestEnvelope request);
 
  private:
-  std::unique_ptr<ServerSession> session_;
+  std::unique_ptr<SessionManager> session_manager_;
 };
 
 }  // namespace phoenix_mcp::server

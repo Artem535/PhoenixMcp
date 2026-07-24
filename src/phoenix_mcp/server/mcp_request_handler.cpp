@@ -7,6 +7,7 @@
 #include <folly/coro/BlockingWait.h>
 
 #include "phoenix_mcp/server/server_session.h"
+#include "phoenix_mcp/server/session_manager.h"
 #if PXM_WITH_OTEL
 #include <opentelemetry/context/propagation/global_propagator.h>
 #include <opentelemetry/context/runtime_context.h>
@@ -101,10 +102,24 @@ std::string trace_id_to_string(
 McpRequestHandler::McpRequestHandler(
     msg::types::ServerCapabilities server_capabilities,
     msg::types::Implementation server_info, std::string instruction,
-    std::unique_ptr<tool::ToolRegistry> tool_registry)
-    : session_(std::make_unique<ServerSession>(
-          std::move(server_capabilities), std::move(server_info),
-          std::move(instruction), std::move(tool_registry))) {}
+    std::unique_ptr<tool::ToolRegistry> tool_registry) {
+  // The tool registry is a *prototype*: ToolRegistry is copy-constructible
+  // (it's just a map of std::functions plus a shared_ptr<Runtime>), so each
+  // new session gets its own copy of the same registered tools rather than
+  // sharing one mutable registry across connections.
+  auto tool_registry_prototype =
+      std::shared_ptr<tool::ToolRegistry>(std::move(tool_registry));
+
+  SessionManager::SessionFactory factory =
+      [server_capabilities, server_info, instruction,
+       tool_registry_prototype] {
+        return std::make_unique<ServerSession>(
+            server_capabilities, server_info, instruction,
+            std::make_unique<tool::ToolRegistry>(*tool_registry_prototype));
+      };
+
+  session_manager_ = std::make_unique<SessionManager>(std::move(factory));
+}
 
 McpRequestHandler::~McpRequestHandler() = default;
 
@@ -146,7 +161,19 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
   auto context_guard =
       opentelemetry::context::RuntimeContext::Attach(extracted_context);
 #endif
-  const auto result = co_await session_->handle_input_async(
+  auto session = session_manager_->get_session(request.connection_id);
+  if (!session) {
+    session = session_manager_->create_session(request.connection_id);
+  }
+  if (!session) {
+    spdlog::error(
+        "McpRequestHandler::handle_json_async| Failed to obtain a session "
+        "for connection '{}'",
+        request.connection_id);
+    co_return std::nullopt;
+  }
+
+  const auto result = co_await session->handle_input_async(
       std::move(request.body), request.cancel_token);
   if (!result.has_value()) {
     co_return std::nullopt;
