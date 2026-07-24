@@ -21,14 +21,16 @@
       "name": "linux-debug",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_MANIFEST_FEATURES": "tests"
       }
     },
     {
       "name": "linux-release",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_MANIFEST_FEATURES": "tests"
       }
     },
     {
@@ -39,7 +41,8 @@
         "PHOENIX_MCP_ENABLE_DROGON": "OFF",
         "PHOENIX_MCP_ENABLE_CROW": "OFF",
         "PHOENIX_MCP_ENABLE_OTEL": "OFF",
-        "VCPKG_MANIFEST_FEATURES": ""
+        "VCPKG_MANIFEST_FEATURES": "",
+        "PHOENIX_MCP_BUILD_TESTS": "OFF"
       }
     },
     {
@@ -162,10 +165,6 @@
     {
       "name": "linux-release",
       "configurePreset": "linux-release"
-    },
-    {
-      "name": "linux-minimal",
-      "configurePreset": "linux-minimal"
     },
     {
       "name": "linux-all-features",
