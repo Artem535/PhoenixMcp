@@ -9,9 +9,17 @@ on:
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
 
+# Cancel a still-running CI run on the same PR/branch when a new commit is
+# pushed, instead of letting old and new runs pile up side by side and
+# compete for the same limited runner concurrency.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   cmake-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +85,10 @@ jobs:
   xmake-linux:
     runs-on: ubuntu-latest
     continue-on-error: true
+    # Known to hang (not just fail) on the upstream bug above rather than
+    # exiting promptly; without a bound here a stuck run parks a runner slot
+    # indefinitely instead of freeing it up for other jobs.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
