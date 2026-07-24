@@ -109,6 +109,7 @@ kcachegrind
 # Dont track
 *.dt
 *.dt.*
+digest.txt
 
 # CMake
 CMakeLists.txt

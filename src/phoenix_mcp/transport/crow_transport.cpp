@@ -63,9 +63,9 @@ int CrowTransport::run(Handler on_message) {
             return;
           }
 
-          res.code = 200;
+          res.code = response->status_or(200);
           res.set_header("content-type", "application/json");
-          res.write(*response);
+          res.write(response->body);
           res.end();
         });
       });

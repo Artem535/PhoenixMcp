@@ -52,7 +52,9 @@ set(phoenix_mcp_sources
     src/phoenix_mcp/protocol/json_rpc_codec.cc
     src/phoenix_mcp/runtime/runtime.cpp
     src/phoenix_mcp/server/mcp_request_handler.cpp
-    src/phoenix_mcp/server/mcp_session.cpp
+    src/phoenix_mcp/server/server_session.cpp
+    src/phoenix_mcp/server/session_states.cpp
+    src/phoenix_mcp/server/session_manager.cpp
     src/phoenix_mcp/server/server.cpp
     src/phoenix_mcp/tool_registry/tool_registry.cpp)
 
@@ -80,6 +82,14 @@ target_compile_definitions(phoenix_mcp_implementation
   PUBLIC PXM_WITH_OTEL=$<BOOL:${PHOENIX_MCP_ENABLE_OTEL}>)
 target_link_libraries(phoenix_mcp_implementation
   PUBLIC ${PHOENIX_MCP_CORE_DEPENDENCIES})
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # Clang linking against libstdc++ does not auto-link libatomic the way GCC
+  # does; some std::atomic<T>::is_lock_free() calls (folly pulls these in)
+  # need it at link time, or every consuming executable fails with undefined
+  # references to __atomic_is_lock_free. PUBLIC so it propagates to consumers.
+  target_link_libraries(phoenix_mcp_implementation PUBLIC atomic)
+endif()
 
 if(PHOENIX_MCP_ENABLE_DROGON)
   target_link_libraries(phoenix_mcp_implementation
@@ -229,10 +239,22 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_dialect_test
     PRIVATE PhoenixMcp::Protocol GTest::gtest_main)
 
+  add_executable(phoenix_mcp_server_session_test
+    tests/phoenix_mcp/server/server_session_test.cc)
+  target_link_libraries(phoenix_mcp_server_session_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
+  add_executable(phoenix_mcp_session_manager_test
+    tests/phoenix_mcp/server/session_manager_test.cc)
+  target_link_libraries(phoenix_mcp_session_manager_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
   gtest_discover_tests(phoenix_mcp_json_rpc_codec_test)
   gtest_discover_tests(phoenix_mcp_dialect_test)
   gtest_discover_tests(phoenix_mcp_mcp_error_test)
+  gtest_discover_tests(phoenix_mcp_server_session_test)
+  gtest_discover_tests(phoenix_mcp_session_manager_test)
 
   add_test(
     NAME phoenix_mcp_public_headers

@@ -70,7 +70,8 @@ int DrogonTransport::run(Handler on_message) {
             .scheduleOn(runtime->cpu_executor())
             .start(
                 [callback = std::move(callback)](
-                    folly::Try<std::optional<std::string>>&& result) mutable {
+                    folly::Try<std::optional<ITransport::ResponseEnvelope>>&&
+                        result) mutable {
                   auto resp = drogon::HttpResponse::newHttpResponse();
                   if (result.hasException()) {
                     resp->setStatusCode(drogon::k500InternalServerError);
@@ -87,9 +88,10 @@ int DrogonTransport::run(Handler on_message) {
                     return;
                   }
 
-                  resp->setStatusCode(drogon::k200OK);
+                  resp->setStatusCode(static_cast<drogon::HttpStatusCode>(
+                      response->status_or(drogon::k200OK)));
                   resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-                  resp->setBody(*response);
+                  resp->setBody(response->body);
                   callback(resp);
                 });
       },

@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main, devel]
+  pull_request:
+    branches: [main, devel]
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+
+# Cancel a still-running CI run on the same PR/branch when a new commit is
+# pushed, instead of letting old and new runs pile up side by side and
+# compete for the same limited runner concurrency.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cmake-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Compilers
+          - preset: gcc-debug
+            run_tests: true
+          - preset: clang-debug
+            run_tests: true
+          # Feature-flag configurations
+          - preset: linux-minimal
+            run_tests: false
+          - preset: linux-debug
+            run_tests: true
+          - preset: linux-release
+            run_tests: true
+          - preset: linux-all-features
+            run_tests: true
+          # Sanitizers (linux-ubsan is deliberately omitted: it sets the same
+          # PHOENIX_MCP_ENABLE_SANITIZERS=ON as linux-asan, so both presets
+          # already produce an identical combined ASan+UBSan build).
+          - preset: linux-asan
+            run_tests: true
+          - preset: linux-tsan
+            run_tests: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup vcpkg
+        run: |
+          git clone --depth=1 https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
+          $VCPKG_ROOT/bootstrap-vcpkg.sh -disableMetrics
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/vcpkg_installed
+          key: vcpkg-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'CMakeLists.txt') }}
+          restore-keys: |
+            vcpkg-${{ matrix.preset }}-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build autoconf autoconf-archive automake libtool pkg-config clang
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        if: matrix.run_tests
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure --timeout 60
+
+  # Informational only, not a required check: xmake's vcpkg package manager
+  # cannot currently resolve add_requires("vcpkg::...") in a repo that has
+  # its own vcpkg.json, in either of its install modes (upstream bug,
+  # https://github.com/xmake-io/xmake/issues/7665). Re-enable as a required
+  # check once that's fixed upstream.
+  xmake-linux:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    # Known to hang (not just fail) on the upstream bug above rather than
+    # exiting promptly; without a bound here a stuck run parks a runner slot
+    # indefinitely instead of freeing it up for other jobs.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: latest
+
+      - name: Setup vcpkg
+        run: |
+          git clone --depth=1 https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
+          $VCPKG_ROOT/bootstrap-vcpkg.sh -disableMetrics
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build autoconf autoconf-archive automake libtool pkg-config
+
+      - name: Cache xmake packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.xmake
+          key: xmake-${{ hashFiles('xmake.lua', 'src/phoenix_mcp/xmake.lua') }}
+          restore-keys: |
+            xmake-
+
+      - name: Configure
+        run: xmake f -m debug -y
+
+      - name: Build
+        run: xmake
+
+      - name: Smoke test
+        run: xmake run using_tool_registry
