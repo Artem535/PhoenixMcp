@@ -3,6 +3,28 @@ add_rules("mode.debug", "mode.release")
 set_languages("c++20")
 add_defines("GLOG_USE_GLOG_EXPORT")
 
+-- vcpkg-backed packages consumed via add_packages("vcpkg::...") in
+-- src/phoenix_mcp/xmake.lua. xmake resolves these against $VCPKG_ROOT when
+-- set (see PHOENIX_MCP_WITH_* env vars there), falling back to xmake-repo
+-- otherwise; without add_requires() here xmake has no record of them at all.
+add_requires("vcpkg::reflectcpp")
+add_requires("vcpkg::spdlog")
+add_requires("vcpkg::folly")
+add_requires("vcpkg::glog")
+add_requires("vcpkg::gflags")
+add_requires("vcpkg::boost-context")
+add_requires("vcpkg::libevent")
+add_requires("vcpkg::double-conversion")
+add_requires("vcpkg::drogon")
+add_requires("vcpkg::trantor")
+add_requires("vcpkg::jsoncpp")
+add_requires("vcpkg::openssl")
+add_requires("vcpkg::brotli")
+add_requires("vcpkg::zlib")
+add_requires("vcpkg::libuuid")
+add_requires("vcpkg::c-ares")
+add_requires("crow")
+
 includes("src/phoenix_mcp/xmake.lua")
 
 -- PhoenixMcp top-level binary (main.cpp)

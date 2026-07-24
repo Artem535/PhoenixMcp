@@ -39,7 +39,8 @@
         "PHOENIX_MCP_ENABLE_DROGON": "OFF",
         "PHOENIX_MCP_ENABLE_CROW": "OFF",
         "PHOENIX_MCP_ENABLE_OTEL": "OFF",
-        "VCPKG_MANIFEST_FEATURES": ""
+        "VCPKG_MANIFEST_FEATURES": "",
+        "PHOENIX_MCP_BUILD_TESTS": "OFF"
       }
     },
     {
@@ -162,10 +163,6 @@
     {
       "name": "linux-release",
       "configurePreset": "linux-release"
-    },
-    {
-      "name": "linux-minimal",
-      "configurePreset": "linux-minimal"
     },
     {
       "name": "linux-all-features",
