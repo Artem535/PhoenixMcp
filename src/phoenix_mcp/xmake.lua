@@ -43,7 +43,7 @@ target("phoenix_mcp_server")
     add_files("tool_registry/tool_registry.cpp")
     add_includedirs(".", "../../include", {public = true})
     add_deps("phoenix_mcp_protocol")
-    add_packages("vcpkg::reflectcpp", "vcpkg::folly", "vcpkg::spdlog", {public = true})
+    add_packages("vcpkg::reflectcpp", "vcpkg::folly", "vcpkg::spdlog", "vcpkg::hfsm2", {public = true})
 
 target("phoenix_mcp_client")
     set_kind("headeronly")

@@ -15,13 +15,25 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(PhoenixMcpOptions)
-include(PhoenixMcpDependencies)
-include(PhoenixMcpWarnings)
-include(PhoenixMcpSanitizers)
 
+# Must run before any target_include_directories() call that references
+# CMAKE_INSTALL_INCLUDEDIR (e.g. via $<INSTALL_INTERFACE:...>): on a fresh
+# build directory that variable is otherwise unset until this module runs,
+# silently producing an empty INSTALL_INTERFACE and breaking exported
+# targets' include paths for downstream consumers.
+include(GNUInstallDirs)
+
+# Must run before PhoenixMcpDependencies: that module gates
+# find_package(GTest) behind `if(BUILD_TESTING)`, and BUILD_TESTING is only
+# defined once CTest is included (on a fresh build directory it's otherwise
+# unset here, silently skipping the GTest lookup).
 set(BUILD_TESTING ${PHOENIX_MCP_BUILD_TESTS} CACHE BOOL
     "Build the CTest test suite" FORCE)
 include(CTest)
+
+include(PhoenixMcpDependencies)
+include(PhoenixMcpWarnings)
+include(PhoenixMcpSanitizers)
 include(CPack)
 
 if(PHOENIX_MCP_ENABLE_CLANG_TIDY)
@@ -38,7 +50,9 @@ set(phoenix_mcp_sources
     src/phoenix_mcp/core/error.cc
     src/phoenix_mcp/runtime/runtime.cpp
     src/phoenix_mcp/server/mcp_request_handler.cpp
-    src/phoenix_mcp/server/mcp_session.cpp
+    src/phoenix_mcp/server/server_session.cpp
+    src/phoenix_mcp/server/session_states.cpp
+    src/phoenix_mcp/server/session_manager.cpp
     src/phoenix_mcp/server/server.cpp
     src/phoenix_mcp/tool_registry/tool_registry.cpp)
 
@@ -66,6 +80,14 @@ target_compile_definitions(phoenix_mcp_implementation
   PUBLIC PXM_WITH_OTEL=$<BOOL:${PHOENIX_MCP_ENABLE_OTEL}>)
 target_link_libraries(phoenix_mcp_implementation
   PUBLIC ${PHOENIX_MCP_CORE_DEPENDENCIES})
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # Clang linking against libstdc++ does not auto-link libatomic the way GCC
+  # does; some std::atomic<T>::is_lock_free() calls (folly pulls these in)
+  # need it at link time, or every consuming executable fails with undefined
+  # references to __atomic_is_lock_free. PUBLIC so it propagates to consumers.
+  target_link_libraries(phoenix_mcp_implementation PUBLIC atomic)
+endif()
 
 if(PHOENIX_MCP_ENABLE_DROGON)
   target_link_libraries(phoenix_mcp_implementation
@@ -152,8 +174,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Install / export
 # ---------------------------------------------------------------------------
-include(GNUInstallDirs)
-
 install(DIRECTORY include/phoenix_mcp
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
   FILES_MATCHING PATTERN "*.h")
@@ -207,8 +227,20 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_mcp_error_test
     PRIVATE PhoenixMcp::Core GTest::gtest_main)
 
+  add_executable(phoenix_mcp_server_session_test
+    tests/phoenix_mcp/server/server_session_test.cc)
+  target_link_libraries(phoenix_mcp_server_session_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
+  add_executable(phoenix_mcp_session_manager_test
+    tests/phoenix_mcp/server/session_manager_test.cc)
+  target_link_libraries(phoenix_mcp_session_manager_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
   gtest_discover_tests(phoenix_mcp_mcp_error_test)
+  gtest_discover_tests(phoenix_mcp_server_session_test)
+  gtest_discover_tests(phoenix_mcp_session_manager_test)
 
   add_test(
     NAME phoenix_mcp_public_headers

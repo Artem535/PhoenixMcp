@@ -29,6 +29,10 @@ enum Code {
   Method_not_found = -32601,
   Invalid_params = -32602,
   Internal_error = -32603,
+  // Not one of the JSON-RPC 2.0 reserved codes; matches the value LSP and
+  // other JSON-RPC-based protocols use for the same "request was cancelled"
+  // concept.
+  Request_cancelled = -32800,
 };
 }
 

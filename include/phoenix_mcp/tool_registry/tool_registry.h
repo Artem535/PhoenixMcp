@@ -1,6 +1,7 @@
 #ifndef PHOENIX_MCP_TOOL_REGISTRY_TOOL_REGISTRY_H_
 #define PHOENIX_MCP_TOOL_REGISTRY_TOOL_REGISTRY_H_
 
+#include <folly/CancellationToken.h>
 #include <folly/coro/Task.h>
 #include <folly/coro/ViaIfAsync.h>
 #include <spdlog/spdlog.h>
@@ -22,7 +23,7 @@ namespace phoenix_mcp::tool {
 
 using AsyncToolHandlerInternal =
     std::function<folly::coro::Task<msg::types::CallToolResult>(
-        const rfl::Generic& params)>;
+        const rfl::Generic& params, const folly::CancellationToken& cancel_token)>;
 
 template <typename InputParams>
 using ToolHandler =
@@ -40,6 +41,15 @@ using AsyncToolHandler =
 template <typename InputParams, typename OutputParams>
 using AsyncToolHandlerWithOutput =
     std::function<folly::coro::Task<OutputParams>(const InputParams& params)>;
+
+// Handler variant for tools that want to cooperate with cancellation (e.g.
+// long-running operations): checks `cancel_token.isCancellationRequested()`
+// itself and returns accordingly. Tools that don't need this can keep using
+// the plain `AsyncToolHandler`/`ToolHandler` above.
+template <typename InputParams>
+using AsyncCancellableToolHandler =
+    std::function<folly::coro::Task<msg::types::CallToolResult>(
+        const InputParams& params, const folly::CancellationToken& cancel_token)>;
 
 class ToolRegistry {
  public:
@@ -75,6 +85,21 @@ class ToolRegistry {
                            const std::string& description,
                            const AsyncToolHandler<InputParams>& handler,
                            ExecutionPolicy policy = ExecutionPolicy::CpuBound) {
+    register_cancellable_tool<InputParams>(
+        name, description,
+        [handler](const InputParams& params,
+                  const folly::CancellationToken&)
+            -> folly::coro::Task<msg::types::CallToolResult> {
+          co_return co_await handler(params);
+        },
+        policy);
+  }
+
+  template <typename InputParams>
+  void register_cancellable_tool(
+      const std::string& name, const std::string& description,
+      const AsyncCancellableToolHandler<InputParams>& handler,
+      ExecutionPolicy policy = ExecutionPolicy::CpuBound) {
     const auto schema_string = rfl::json::to_schema<InputParams>();
     auto schema =
         rfl::json::read<msg::types::ToolInputSchema>(schema_string).value();
@@ -87,12 +112,13 @@ class ToolRegistry {
     };
     tool_descriptions_[name] = tool;
     auto runtime = runtime_;
-    tools_[name] = [handler, runtime,
-                    policy](const rfl::Generic& generic_params)
+    tools_[name] = [handler, runtime, policy](
+                       const rfl::Generic& generic_params,
+                       const folly::CancellationToken& cancel_token)
         -> folly::coro::Task<msg::types::CallToolResult> {
       InputParams params =
           rfl::from_generic<InputParams>(generic_params).value();
-      auto task = handler(params);
+      auto task = handler(params, cancel_token);
       switch (policy) {
         case ExecutionPolicy::Inline:
           co_return co_await std::move(task);
@@ -125,7 +151,8 @@ class ToolRegistry {
   msg::types::CallToolResult call_tool(const std::string& name,
                                        const rfl::Generic& params);
   folly::coro::Task<msg::types::CallToolResult> call_tool_async(
-      const std::string& name, const rfl::Generic& params);
+      const std::string& name, const rfl::Generic& params,
+      folly::CancellationToken cancel_token = {});
   std::vector<msg::types::Tool> get_tool_list();
 
  private:

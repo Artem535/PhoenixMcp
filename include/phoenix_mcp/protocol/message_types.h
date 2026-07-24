@@ -42,6 +42,10 @@ struct Notification {
   std::string method;
   OptionalParams params;
 };
+struct MinimalNotification {
+  std::string jsonrpc = "2.0";
+  std::string method;
+};
 struct ErrorData {
   int code;
   std::string message;
@@ -127,18 +131,19 @@ struct CallToolRequest {
   rfl::Flatten<MinimalRequest> flatten;
   std::optional<CallToolParams> params;
 };
+struct CancelNotificationParams {
+  rfl::Rename<"requestId", RequestId> request_id;
+  std::optional<std::string> reason;
+};
 struct CancelNotification {
-  rfl::Flatten<Notification> flatten;
+  rfl::Flatten<MinimalNotification> flatten;
+  std::optional<CancelNotificationParams> params;
 };
 struct InitializeNotification {
   rfl::Flatten<Notification> flatten;
 };
 struct ToolListChangedNotification {
   rfl::Flatten<Notification> flatten;
-};
-struct NotificationParams {
-  RequestId request_id;
-  std::optional<std::string> reason;
 };
 struct RootsParams {
   rfl::Rename<"listChanged", std::optional<bool>> list_changed;
