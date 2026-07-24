@@ -1,0 +1,201 @@
+= PhoenixMcp Epic 4 Implementation Plan: SDK Completeness
+:toc:
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> `superpowers:subagent-driven-development` (recommended) or
+> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Deliver the `0.7.0`–`0.8.0` milestone from
+xref:architecture/index.adoc[SDK architecture]'s migration stages:
+resources, prompts, notifications, progress, authentication hooks, and
+extended telemetry — the capabilities that turn a tools-only server into a
+complete MCP implementation.
+
+**Blocked by:** Epic 2 (server-side dialect/session plumbing must exist to
+add capabilities to) and Epic 3 (`ClientSession`/`Host` need to consume
+whatever this epic adds, or a resource/prompt capability is server-only and
+half-useless).
+
+**Tech Stack:** C++20, Folly, reflect-cpp, OpenTelemetry C++ SDK (already an
+optional dependency gated by `PHOENIX_MCP_ENABLE_OTEL`), GoogleTest.
+
+== Starting state
+
+Only `tools/list` and `tools/call` exist today (`ToolRegistry`,
+`tool_registry.cc`). `dialect.cc`'s `2025-06-18` implementation (Epic 2)
+decodes `notifications/cancelled` and `notifications/tools/list_changed`
+already, per its test file, but nothing for resources or prompts exists at
+any layer — no `include/phoenix_mcp/resources/` or
+`include/phoenix_mcp/prompts/` directory, no progress-token propagation
+through `ToolRegistry`'s handler signatures, and no
+`IRequestAuthenticator` seam on the server side (the client-side
+`ICredentialProvider` from Epic 3 has no server-side counterpart yet).
+
+== Global constraints
+
+* Use `rtk` for every shell command and `rtk git` for Git inspection.
+* Every new capability (resources, prompts) must be independently
+  feature-gated the same way HTTP/telemetry already are via
+  `PHOENIX_MCP_ENABLE_*` options in `cmake/PhoenixMcpOptions.cmake`, so a
+  minimal tools-only server is still buildable without them.
+* Telemetry redacts authorization headers, prompts, tool arguments, and
+  resource payloads by default, per
+  xref:architecture/index.adoc[SDK architecture]; recording payloads is an
+  explicit opt-in, never the default, in every task that touches telemetry.
+* An expected tool/resource/prompt business failure is an MCP result with
+  `isError: true`, never promoted to a JSON-RPC internal error — this
+  distinction from the architecture doc's Errors section applies to every
+  new capability added here, not just tools.
+
+== File map
+
+* Create `include/phoenix_mcp/resources/{resource_registry.h,
+  resource_template.h}`, `src/phoenix_mcp/resources/resource_registry.cc`.
+* Create `include/phoenix_mcp/prompts/prompt_registry.h`,
+  `src/phoenix_mcp/prompts/prompt_registry.cc`.
+* Modify `include/phoenix_mcp/protocol/dialect.h` and
+  `src/phoenix_mcp/protocol/dialect.cc` to decode/encode
+  `resources/list`, `resources/read`, `resources/subscribe`,
+  `prompts/list`, `prompts/get`, and progress notifications.
+* Modify `include/phoenix_mcp/server/server_session.h` to hold a
+  `ResourceRegistry`/`PromptRegistry` alongside its existing
+  `ToolRegistry`, and to propagate a `progressToken` through handler
+  invocation.
+* Create `include/phoenix_mcp/server/i_request_authenticator.h`.
+* Modify `src/phoenix_mcp/transport/drogon_transport.cc` (Epic 2's
+  Streamable HTTP work) to add Origin/host validation and rate-limit
+  hooks ahead of session dispatch.
+* Modify telemetry module (`PhoenixMcp::Telemetry`, currently gated by
+  `PHOENIX_MCP_ENABLE_OTEL`) to emit spans/metrics for the new
+  capabilities.
+* Create mirrored test folders under `tests/phoenix_mcp/resources/` and
+  `tests/phoenix_mcp/prompts/`.
+
+== Tasks
+
+=== Task 1: Resources capability
+
+*Files:* `include/phoenix_mcp/resources/{resource_registry.h,
+resource_template.h}`, `src/phoenix_mcp/resources/resource_registry.cc`,
+`tests/phoenix_mcp/resources/resource_registry_test.cc`.
+
+*Consumes:* Epic 2's `ServerSession`/dialect plumbing.
+*Produces:* `resources/list`, `resources/read`, `resources/subscribe`,
+resource templates (URI patterns), and the
+`notifications/resources/updated` / `notifications/resources/list_changed`
+pair.
+
+- [ ] Write a failing test registering a static resource and a templated
+  resource (e.g. `file:///{path}`), listing both, and reading each.
+- [ ] Write a failing test for `resources/subscribe`: a change to a
+  subscribed resource emits exactly one
+  `notifications/resources/updated` per change, not per subscriber-poll.
+- [ ] Implement `ResourceRegistry` mirroring `ToolRegistry`'s registration
+  ergonomics (type-safe registration via templates/reflect-cpp, JSON
+  schema generation where applicable to templates).
+- [ ] Wire `resources/*` methods into `ProtocolDialect` and
+  `ServerSession`.
+- [ ] Commit with `feat: add resources capability`.
+
+=== Task 2: Prompts capability
+
+*Files:* `include/phoenix_mcp/prompts/prompt_registry.h`,
+`src/phoenix_mcp/prompts/prompt_registry.cc`,
+`tests/phoenix_mcp/prompts/prompt_registry_test.cc`.
+
+*Consumes:* Task 1's registry pattern (reuse it, do not invent a third
+shape after `ToolRegistry` and `ResourceRegistry`).
+*Produces:* `prompts/list`, `prompts/get`, and
+`notifications/prompts/list_changed`.
+
+- [ ] Write a failing test registering a parameterized prompt template and
+  fetching it with arguments substituted.
+- [ ] Implement `PromptRegistry` and wire `prompts/*` into
+  `ProtocolDialect`/`ServerSession`.
+- [ ] Commit with `feat: add prompts capability`.
+
+=== Task 3: Progress notifications
+
+*Files:* `include/phoenix_mcp/protocol/dialect.h`,
+`src/phoenix_mcp/protocol/dialect.cc`,
+`include/phoenix_mcp/server/server_session.h`,
+`tests/phoenix_mcp/protocol/progress_test.cc`.
+
+*Consumes:* Tasks 1–2 and the existing `tools/call` path (progress applies
+to any long-running request, not just tools, but tools are the only
+capability with a call path today).
+*Produces:* `progressToken` accepted on any request, and
+`notifications/progress` emitted by handlers that opt in.
+
+- [ ] Write a failing test: a tool handler that reports progress via an
+  injected progress-reporter callback causes `notifications/progress` to
+  be sent with the caller-supplied token, and a handler that never reports
+  progress emits nothing (no spurious notifications).
+- [ ] Implement progress-token propagation from request decode through to
+  handler invocation for tools, resources, and prompts uniformly.
+- [ ] Commit with `feat: add progress notification support`.
+
+=== Task 4: Server-side authentication hooks
+
+*Files:* `include/phoenix_mcp/server/i_request_authenticator.h`,
+`src/phoenix_mcp/transport/drogon_transport.cc`,
+`tests/phoenix_mcp/server/i_request_authenticator_test.cc`.
+
+*Consumes:* Epic 2's Streamable HTTP session/request path.
+*Produces:* `IRequestAuthenticator`, Origin/host validation, request
+limits, and rate-limit hooks, per
+xref:architecture/index.adoc[SDK architecture]'s security section
+("server side: `IRequestAuthenticator`, Origin and host validation, request
+limits, and rate-limit hooks").
+
+- [ ] Write a failing test: a request with a disallowed `Origin` header is
+  rejected before it reaches `ServerSession`, with the correct
+  `Authentication`/`Authorization`-category `McpError` (the categories #16's
+  stack added to `McpError` — see Epic 2's plan — exist for exactly this).
+- [ ] Implement `IRequestAuthenticator` as an injectable seam ahead of
+  session dispatch in the HTTP transport, plus Origin/host validation and a
+  basic rate-limit hook (token bucket or fixed-window, injectable so the
+  embedding application can supply its own policy).
+- [ ] Commit with `feat: add server-side request authentication hooks`.
+
+=== Task 5: Extended telemetry
+
+*Files:* `PhoenixMcp::Telemetry` module sources,
+`tests/phoenix_mcp/telemetry/`.
+
+*Consumes:* Tasks 1–4 (there is more to instrument once resources, prompts,
+progress, and auth exist).
+*Produces:* OpenTelemetry spans/metrics for every operation and transport
+activity added in this epic, with the redaction-by-default policy from
+xref:architecture/index.adoc[SDK architecture] enforced, not just
+documented.
+
+- [ ] Write a failing test asserting a resource read's span does not
+  contain the resource's own payload unless an explicit opt-in flag is set.
+- [ ] Write the same style of test for tool arguments and prompt
+  arguments — this should already hold from the Foundation epic's
+  telemetry scaffold, but re-verify it explicitly now that there are more
+  payload-bearing operations to leak.
+- [ ] Instrument resources/prompts/progress/auth operations with spans and
+  counters, gated behind `PHOENIX_MCP_ENABLE_OTEL` as before.
+- [ ] Commit with `feat: extend telemetry to resources, prompts, progress, and auth`.
+
+== Plan self-review
+
+*Coverage:* Tasks 1–3 deliver every capability named in the `0.7.0`–`0.8.0`
+milestone (resources, prompts, notifications, progress). Task 4 delivers
+the authentication-hooks item. Task 5 delivers extended telemetry.
+
+*Consistency:* Every new capability reuses `ToolRegistry`'s established
+registration ergonomics rather than inventing a new pattern per capability;
+every task respects the redaction-by-default and
+result-vs-error-vs-McpError distinctions already established in the
+architecture doc.
+
+*Scope:* Client-side consumption of these capabilities (does `Host`
+surface resources/prompts across qualified names the way it does tools?)
+is intentionally left to whichever of Epic 3 or a follow-up task actually
+implements it — this plan is server-capability-first, matching how Epic 2
+was server-first before Epic 3 added the client. Fuzzing the new decode
+paths is Epic 5.

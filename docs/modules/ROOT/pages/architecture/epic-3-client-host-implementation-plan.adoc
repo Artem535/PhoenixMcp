@@ -1,0 +1,226 @@
+= PhoenixMcp Epic 3 Implementation Plan: Client and Host
+:toc:
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> `superpowers:subagent-driven-development` (recommended) or
+> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Deliver the `0.5.0`–`0.6.0` milestone from
+xref:architecture/index.adoc[SDK architecture]'s migration stages: client
+session, stdio and HTTP clients, pending-request correlation, cancellation,
+a multi-server host, and the policy-interceptor seam.
+
+**Blocked by:** Epic 2 (Protocol and Server). `ClientSession` reuses
+`JsonRpcCodec` and `ProtocolDialect` from that epic; a `TransportHttp`
+client needs the server's Streamable HTTP session-ID/SSE semantics
+(Epic 2, Task 4) to have something real to talk to.
+
+**Tech Stack:** C++20, Folly, reflect-cpp, GoogleTest/GoogleMock, Drogon
+client APIs (primary HTTP client), CTest.
+
+== Starting state
+
+`PhoenixMcp::Client` and `PhoenixMcp::Host` exist today only as empty
+`INTERFACE` targets in `CMakeLists.txt` — no `include/phoenix_mcp/client/`
+or `include/phoenix_mcp/host/` directory exists yet, and neither does any
+`src/phoenix_mcp/client/` or `src/phoenix_mcp/host/`. This is a green-field
+epic: nothing here can be assumed to already exist, unlike Epic 2 where
+substantial code predated the plan.
+
+== Global constraints
+
+* Use `rtk` for every shell command and `rtk git` for Git inspection.
+* `ClientSession` must use the lifecycle state machine already specified in
+  xref:architecture/index.adoc[SDK architecture]'s "Lifecycle and
+  concurrency" section (`Configured → Connecting → Initializing → Ready →
+  Degraded/Reconnecting → Stopping → Stopped`) — do not invent a different
+  state set for the client side.
+* `Client` depends only on `PhoenixMcp::Protocol`, per the module graph; it
+  must not depend on `PhoenixMcp::Server` or any transport-concrete type.
+* `Host` depends only on `PhoenixMcp::Client`; it is not a process
+  supervisor or policy engine per the architecture doc's explicit
+  non-goals — do not add process spawning, sandboxing, or approval logic
+  inside `Host` itself. That belongs behind `IToolCallInterceptor`,
+  implemented by the embedding application.
+* Reuse `JsonRpcCodec`/`ProtocolDialect` from Epic 2 for encode/decode;
+  do not write a second codec for the client side.
+
+== File map
+
+* Create `include/phoenix_mcp/client/{client_session.h,pending_request.h,
+  reconnect_policy.h,i_credential_provider.h}`.
+* Create `src/phoenix_mcp/client/{client_session.cc,pending_request.cc,
+  reconnect_policy.cc}`.
+* Create `include/phoenix_mcp/transport/stdio_client_transport.h`,
+  `include/phoenix_mcp/transport/http_client_transport.h` and matching
+  `.cc` files.
+* Create `include/phoenix_mcp/host/{host.h,i_tool_call_interceptor.h}` and
+  `src/phoenix_mcp/host/host.cc`.
+* Create mirrored test folders under `tests/phoenix_mcp/client/` and
+  `tests/phoenix_mcp/host/`.
+* Modify `CMakeLists.txt` to turn `phoenix_mcp_client` and
+  `phoenix_mcp_host` from empty `INTERFACE` targets into real static
+  libraries with sources, mirroring how #18 grew `phoenix_mcp_protocol`
+  from header-only to static once it had `.cc` files.
+* Modify `src/phoenix_mcp/xmake.lua` to mirror the new client/host targets.
+* Create `examples/client_stdio/` and `examples/client_http/`.
+
+== Tasks
+
+=== Task 1: ClientSession core and pending-request correlation
+
+*Files:* `include/phoenix_mcp/client/client_session.h`,
+`src/phoenix_mcp/client/{client_session.cc,pending_request.cc}`,
+`tests/phoenix_mcp/client/client_session_test.cc`.
+
+*Consumes:* Epic 2's `JsonRpcCodec`/`ProtocolDialect`, the lifecycle diagram
+in xref:architecture/index.adoc[SDK architecture].
+*Produces:* a transport-agnostic `ClientSession` that generates request
+IDs, correlates responses to pending requests, dispatches server-initiated
+notifications and requests, and implements `close()` idempotently — the
+client-side mirror of what `ServerSession` already does for #18.
+
+- [ ] Write failing tests for: a request that never gets a matching
+  response times out and resolves its `folly::coro::Task` with a
+  `Timeout`-category `McpError`; two concurrent requests get correctly
+  correlated by ID even if responses arrive out of order; `close()` called
+  twice does not double-fail pending requests.
+- [ ] Implement `ClientSession` as the state machine from the architecture
+  doc's lifecycle diagram, using `folly::CancellationSource` per pending
+  request the same way `ServerSession` does.
+- [ ] Implement server-to-client request handling (the MCP spec allows the
+  server to call back into the client, e.g. `sampling/createMessage`) as a
+  registrable handler, not a hardcoded method list.
+- [ ] Run the new suite; confirm bounded queues (per the architecture doc's
+  "All queues are bounded" invariant) are enforced with a concrete limit,
+  not just documented.
+- [ ] Commit with `feat: add ClientSession core and pending-request correlation`.
+
+=== Task 2: Client-side transports (stdio, HTTP)
+
+*Files:* `include/phoenix_mcp/transport/stdio_client_transport.h`,
+`include/phoenix_mcp/transport/http_client_transport.h`, matching `.cc`
+files, `tests/phoenix_mcp/transport/`.
+
+*Consumes:* Task 1's `ClientSession`, Epic 2's Streamable HTTP server (as
+the thing the HTTP client actually talks to in integration tests).
+*Produces:* both transports named in the `0.5.0`–`0.6.0` milestone.
+
+- [ ] Write a failing integration test: spawn `create_server` (or an
+  in-process equivalent) over stdio, connect a stdio client transport to
+  it, and complete a full `initialize` → `tools/list` → `tools/call`
+  round trip.
+- [ ] Implement the stdio client transport against an already-open channel,
+  matching `TransportStdio`'s existing contract of not spawning the child
+  process itself (the embedding application owns that).
+- [ ] Write a failing integration test against Epic 2's Streamable HTTP
+  server: connect, receive and store the `Mcp-Session-Id`, open the SSE
+  stream, and handle a reconnect using `Last-Event-ID`.
+- [ ] Implement the HTTP client transport using Drogon's client APIs,
+  handling the session-ID and SSE contract Epic 2 Task 4 defines.
+- [ ] Commit with `feat: add stdio and HTTP client transports`.
+
+=== Task 3: Reconnect policy
+
+*Files:* `include/phoenix_mcp/client/reconnect_policy.h`,
+`src/phoenix_mcp/client/reconnect_policy.cc`,
+`tests/phoenix_mcp/client/reconnect_policy_test.cc`.
+
+*Consumes:* Task 2's HTTP client transport and its `Reconnecting` state.
+*Produces:* the `Degraded → Reconnecting → Initializing` transition from
+the lifecycle diagram actually doing something, with backoff.
+
+- [ ] Write a failing test asserting a configurable backoff (e.g.
+  exponential with jitter, a max attempt count or disables-after-N policy)
+  is honored, and that a successful reconnect resumes the SSE stream via
+  `Last-Event-ID` rather than restarting the whole session from
+  `Configured`.
+- [ ] Implement the policy as an injectable strategy (so tests can use a
+  deterministic fake clock/backoff rather than sleeping in real time).
+- [ ] Commit with `feat: add client reconnect policy with SSE resumption`.
+
+=== Task 4: Client-side security adapters
+
+*Files:* `include/phoenix_mcp/client/i_credential_provider.h`, wiring into
+`http_client_transport.cc`.
+
+*Consumes:* Task 2's HTTP client transport.
+*Produces:* the client-side half of
+xref:architecture/index.adoc[SDK architecture]'s security section:
+"`ICredentialProvider`, TLS/custom CA/proxy policy, and origin-aware
+redirect behavior."
+
+- [ ] Write a failing test asserting a redirect to a different origin does
+  not silently carry credentials across, per the architecture doc's
+  "origin-aware redirect behavior."
+- [ ] Implement `ICredentialProvider` as an injected seam (bearer token,
+  mTLS, or custom scheme), TLS/custom-CA/proxy configuration on the HTTP
+  client transport, and the origin-aware redirect check above.
+- [ ] Commit with `feat: add client credential provider and origin-aware redirects`.
+
+=== Task 5: Host — multi-server management and tool-call interception
+
+*Files:* `include/phoenix_mcp/host/{host.h,i_tool_call_interceptor.h}`,
+`src/phoenix_mcp/host/host.cc`, `tests/phoenix_mcp/host/host_test.cc`.
+
+*Consumes:* Tasks 1–4 (a working, reconnecting, authenticated
+`ClientSession` per remote server).
+*Produces:* `Host` as specified: manages multiple clients, publishes
+discovered tools/resources/prompts under qualified names like
+`github.create_issue`, and invokes an optional `IToolCallInterceptor`
+before routing a remote tool call — explicitly not a process supervisor or
+policy engine itself.
+
+- [ ] Write a failing test: two connected servers both expose a tool named
+  `create_issue`; `Host` must expose both as distinct qualified names and
+  never silently collide them.
+- [ ] Write a failing test: an `IToolCallInterceptor` that returns a
+  rejection prevents the call from ever reaching the remote server.
+- [ ] Implement `Host` managing N `ClientSession` instances, qualified-name
+  aggregation of `tools/list`, `resources/list`, `prompts/list` across all
+  connected servers, and the interceptor seam ahead of every remote tool
+  call (approval, audit, budget enforcement, secret filtering, or argument
+  rewriting are all the embedding application's job via this seam, not
+  `Host`'s).
+- [ ] Commit with `feat: add Host multi-server management and tool-call interceptor`.
+
+=== Task 6: Client and Host examples, CTest coverage
+
+*Files:* `examples/client_stdio/`, `examples/client_http/`,
+`CMakeLists.txt`, `src/phoenix_mcp/xmake.lua`.
+
+*Consumes:* Tasks 1–5.
+*Produces:* buildable, runnable documentation (per the architecture doc's
+"Examples remain buildable documentation but are never the primary
+correctness mechanism") and CMake/Xmake targets that mirror the new module
+graph, matching how #18 and prior epics registered every new module in
+both build systems.
+
+- [ ] Add a stdio client example that connects to `create_server`'s stdio
+  mode and lists its tools.
+- [ ] Add an HTTP client example that connects to `create_server_http` and
+  completes a full request/response and one SSE-delivered notification.
+- [ ] Turn `phoenix_mcp_client` and `phoenix_mcp_host` from empty
+  `INTERFACE` targets into real static libraries in `CMakeLists.txt`;
+  mirror both in `src/phoenix_mcp/xmake.lua`.
+- [ ] Run the full CTest suite (unit + the new client/host integration
+  tests) on `linux-debug` and `linux-all-features`.
+- [ ] Commit with `build: register Client and Host targets and examples`.
+
+== Plan self-review
+
+*Coverage:* Tasks 1–4 deliver every `ClientSession`-adjacent item in the
+`0.5.0`–`0.6.0` milestone (session, transports, reconnect, security).
+Task 5 delivers `Host`. Task 6 makes all of it buildable, testable, and
+demonstrated, matching the bar every prior epic held itself to.
+
+*Consistency:* Reuses Epic 2's codec/dialect rather than duplicating them;
+follows the same state-machine-first, transport-second ordering Epic 2
+used for `ServerSession`/`SessionManager`; keeps `Host` scoped to exactly
+what the architecture doc says it is (not a policy engine).
+
+*Scope:* Resources, prompts, and progress notifications are excluded from
+`ClientSession`'s decode surface here beyond what's needed to route them —
+their actual semantics are Epic 4. Fuzzing the client-side parsers is
+Epic 5.

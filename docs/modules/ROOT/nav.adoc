@@ -4,3 +4,9 @@
 ** xref:architecture/code-style.adoc[Code style]
 ** xref:architecture/build-systems.adoc[Build systems]
 ** xref:architecture/server-session-design.adoc[ServerSession state machine]
+** Epic implementation plans
+*** xref:architecture/epic-0-1-implementation-plan.adoc[Epic 0-1: Foundation]
+*** xref:architecture/epic-2-protocol-server-implementation-plan.adoc[Epic 2: Protocol and server]
+*** xref:architecture/epic-3-client-host-implementation-plan.adoc[Epic 3: Client and host]
+*** xref:architecture/epic-4-sdk-completeness-implementation-plan.adoc[Epic 4: SDK completeness]
+*** xref:architecture/epic-5-stabilization-implementation-plan.adoc[Epic 5: Stabilization]
