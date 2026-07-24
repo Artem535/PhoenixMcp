@@ -13,6 +13,8 @@
 #include <folly/coro/Task.h>
 #include <spdlog/spdlog.h>
 
+#include "phoenix_mcp/core/error.h"
+#include "phoenix_mcp/protocol/dialect.h"
 #include "phoenix_mcp/protocol/message_types.h"
 #include "phoenix_mcp/server/session_states.h"
 #include "phoenix_mcp/tool_registry/tool_registry.h"
@@ -20,9 +22,7 @@
 namespace phoenix_mcp::server {
 
 namespace msg_t = msg::types;
-
-using OptionalRequest = std::optional<msg::types::Request>;
-using OptionalNotification = std::optional<msg::types::Notification>;
+namespace protocol = phoenix_mcp::protocol;
 
 /// @brief Configuration for ServerSession behavior
 struct ServerConfig {
@@ -89,6 +89,14 @@ class ServerSession {
   msg::types::Implementation server_info_;
   std::string instruction_;
 
+  // ---- Protocol ----
+  // The dialect used to decode/encode MCP messages. Bootstrapped to the
+  // "2025-06-18" dialect at construction so the very first `initialize`
+  // request (which is what negotiates the real dialect) can itself be
+  // decoded; replaced with the negotiated dialect once `initialize`
+  // succeeds. Never null.
+  std::unique_ptr<protocol::ProtocolDialect> dialect_;
+
   // ---- State machine ----
   // Declared last: the FSM context is `*this`, and the initial state's
   // enter() may run during construction, so every other member must already
@@ -118,20 +126,22 @@ class ServerSession {
   std::map<msg::types::RequestId, folly::CancellationSource>
       pending_cancellations_;
 
-  void handle_cancel_notification(const msg::types::Notification& notif);
+  void handle_cancel_notification(const msg::types::CancelNotification& notif);
 
   // ---- Internal handlers ----
+  // Handles a decoded non-request envelope (a notification, per
+  // JsonRpcCodec's JsonRpcMessage variant); decodes it through `dialect_`
+  // and dispatches on the resulting McpNotification variant.
+  void handle_notification(const protocol::JsonRpcMessage& envelope);
+
   folly::coro::Task<rfl::Generic> handle_operation_async(
       const msg::types::Request& request, folly::CancellationToken cancel_token);
 
   folly::coro::Task<rfl::Generic> call_tool_async(
-      const msg::types::Request& request, folly::CancellationToken cancel_token);
+      const msg::types::CallToolRequest& call_request,
+      const msg::types::RequestId& id, folly::CancellationToken cancel_token);
 
   // ---- Helpers ----
-  static OptionalRequest try_serialize_request(const std::string& request);
-  static OptionalNotification try_serialize_notification(
-      const std::string& json);
-
   rfl::Generic make_initialize_response(const msg::types::RequestId& id) const;
 
   template <class T>
@@ -144,6 +154,22 @@ class ServerSession {
   static rfl::Generic create_error(const std::string& msg,
                                    const msg::types::RequestId& id,
                                    int code = -32602);
+
+  // Encodes an McpError as a wire-format JSON-RPC error via `dialect_`, so
+  // every error response — from a malformed envelope, a failed protocol
+  // negotiation, or an unknown method — carries the exact category/code
+  // JsonRpcCodec/ProtocolDialect themselves assign it, not a session-invented
+  // one.
+  rfl::Generic encode_error_response(const core::McpError& error,
+                                     const msg::types::RequestId& id) const;
+
+  // Decodes `initialize_request` through the bootstrap dialect to read the
+  // client's requested protocolVersion, then resolves it via
+  // `protocol::make_dialect`. Returns the negotiated dialect, or an McpError
+  // (Protocol-category) if the request is malformed or the version is
+  // unsupported. Does not mutate `dialect_` itself.
+  folly::Expected<std::unique_ptr<protocol::ProtocolDialect>, core::McpError>
+  negotiate_dialect(const msg::types::Request& initialize_request) const;
 
   // ---- State queries ----
   bool is_uninitialized() const;

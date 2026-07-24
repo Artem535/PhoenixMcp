@@ -29,7 +29,9 @@ std::unique_ptr<ServerSession> make_session(
 }
 
 constexpr auto kInitializeRequest =
-    R"({"jsonrpc":"2.0","method":"initialize","id":1})";
+    R"({"jsonrpc":"2.0","method":"initialize","id":1,)"
+    R"("params":{"protocolVersion":"2025-06-18","capabilities":{},)"
+    R"("clientInfo":{"name":"test-client","version":"0.0.0"}}})";
 constexpr auto kInitializedNotification =
     R"({"jsonrpc":"2.0","method":"notifications/initialized"})";
 
@@ -329,6 +331,31 @@ TEST(ServerSessionTest, CloseWaitsForInFlightToolToDrainThenSettles) {
   EXPECT_EQ(session->state_name(), "Settled");
   EXPECT_TRUE(tool_saw_cancellation);
   EXPECT_LT(elapsed, std::chrono::milliseconds(1000));
+}
+
+TEST(ServerSessionTest, RejectsMalformedJsonWithCodecErrorCode) {
+  const auto session = make_session();
+  const auto response = session->handle_input("not valid json");
+  ASSERT_TRUE(response.has_value());
+  const auto response_json = rfl::json::write(*response);
+  // -32700 is JsonRpcCodec's ErrorCode::InvalidJson mapped to its JSON-RPC
+  // wire code, not a session-invented one.
+  EXPECT_NE(response_json.find("-32700"), std::string::npos) << response_json;
+}
+
+TEST(ServerSessionTest, InitializeWithUnsupportedProtocolVersionFailsInitialization) {
+  const auto session = make_session();
+  const auto response = session->handle_input(
+      R"({"jsonrpc":"2.0","method":"initialize","id":1,)"
+      R"("params":{"protocolVersion":"1999-01-01","capabilities":{},)"
+      R"("clientInfo":{"name":"test-client","version":"0.0.0"}}})");
+  ASSERT_TRUE(response.has_value());
+  const auto response_json = rfl::json::write(*response);
+  // -32600 is JsonRpcCodec's ErrorCode::InvalidRequest mapped to its
+  // JSON-RPC wire code — negotiation failure is a Protocol-category error,
+  // not a session-invented one.
+  EXPECT_NE(response_json.find("-32600"), std::string::npos) << response_json;
+  EXPECT_EQ(session->state_name(), "Failed");
 }
 
 TEST(ServerSessionTest, CloseForceSettlesAfterSettleTimeoutElapses) {
