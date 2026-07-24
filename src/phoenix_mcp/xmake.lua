@@ -33,8 +33,10 @@ target("phoenix_mcp_core")
     add_packages("vcpkg::folly", "vcpkg::spdlog", {public = true})
 
 target("phoenix_mcp_protocol")
-    set_kind("headeronly")
-    add_includedirs("../../include", {public = true})
+    set_kind("static")
+    add_files("protocol/dialect.cc")
+    add_files("protocol/json_rpc_codec.cc")
+    add_includedirs(".", "../../include", {public = true})
     add_deps("phoenix_mcp_core")
 
 target("phoenix_mcp_server")

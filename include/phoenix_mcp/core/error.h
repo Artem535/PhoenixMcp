@@ -19,6 +19,8 @@ enum class ErrorCategory {
   Lifecycle,
   Tool,
   Internal,
+  Authentication,
+  Authorization,
 };
 
 const std::error_category& mcp_error_category() noexcept;
@@ -63,6 +65,12 @@ enum class ErrorCode {
 
   // Internal
   InternalError = 900,
+
+  // Authentication
+  AuthenticationFailed = 1000,
+
+  // Authorization
+  AuthorizationFailed = 1100,
 };
 
 std::error_code make_error_code(ErrorCode code) noexcept;
@@ -73,6 +81,8 @@ class McpError {
   McpError(ErrorCode code, std::string message);
   McpError(ErrorCode code, std::string message, rfl::Generic data);
   McpError(ErrorCode code, std::string message, std::shared_ptr<McpError> cause);
+  McpError(ErrorCode code, std::string message, rfl::Generic data,
+           std::shared_ptr<McpError> cause);
 
   ErrorCode code() const noexcept;
   ErrorCategory category() const noexcept;
