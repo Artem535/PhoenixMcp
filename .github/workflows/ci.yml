@@ -69,8 +69,14 @@ jobs:
         if: matrix.run_tests
         run: ctest --preset ${{ matrix.preset }} --output-on-failure --timeout 60
 
+  # Informational only, not a required check: xmake's vcpkg package manager
+  # cannot currently resolve add_requires("vcpkg::...") in a repo that has
+  # its own vcpkg.json, in either of its install modes (upstream bug,
+  # https://github.com/xmake-io/xmake/issues/7665). Re-enable as a required
+  # check once that's fixed upstream.
   xmake-linux:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
