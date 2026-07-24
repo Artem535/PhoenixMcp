@@ -19,7 +19,7 @@ The main goal is to simplify the creation of tool servers for AI assistants by p
 * **Type-safe tool registration** — using C++ templates for parameter validation at compile time
 * **Automatic JSON schema generation** — via the reflectcpp library based on data structures
 * **Flexible transport system** — abstract layer, current implementation via stdin/stdout
-* **Lifecycle management** — full implementation of stages: uninitialized → initialized → operation → shutdown
+* **Lifecycle management** — formal HFSM2 state machine: uninitialized → initializing → operation → stopping → settled (with a failed error path)
 * **Support for different response formats** — text, JSON objects, images (base64)
 * **Advanced logging** — integration with spdlog with multiple verbosity levels
 * **Industrial-grade code quality** — application of clang-format, clang-tidy, and modern C++20 practices
@@ -27,8 +27,9 @@ The main goal is to simplify the creation of tool servers for AI assistants by p
 == Requirements
 
 * Compiler with full C++20 support (GCC 11+, Clang 13+, MSVC 2022+)
-* https://xmake.io[Xmake] 2.8+ — build system
-* https://vcpkg.io[Vcpkg] — package manager (integrated with xmake)
+* https://cmake.org[CMake] 3.28+ with Ninja — the authoritative build system
+* https://vcpkg.io[Vcpkg] (manifest mode) — package manager, referenced via `VCPKG_ROOT`
+* Optionally, https://xmake.io[Xmake] 2.8+ — a supported secondary workflow with Linux smoke coverage only (see `docs/modules/ROOT/pages/architecture/build-systems.adoc`)
 * Operating system: Linux, macOS, Windows (WSL)
 
 == Installation and Build
@@ -43,14 +44,30 @@ cd PhoenixMcp
 
 === Dependencies
 
-Xmake will automatically install required packages via vcpkg:
-- `reflectcpp` — reflection and serialization
-- `yyjson` — fast JSON parser
-- `spdlog` — logging
+Dependencies are declared in `vcpkg.json` (manifest mode) and installed automatically
+by CMake's vcpkg toolchain file. The core set is `reflectcpp`, `folly`, `spdlog`, and
+`hfsm2`; optional vcpkg features add `drogon`/`crow` HTTP transports, an HTTP client
+(`openssl`), OpenTelemetry (`otel`), and the `gtest`-based test suite (`tests`) — see
+the `VCPKG_MANIFEST_FEATURES` cache variable per preset in `CMakePresets.json`.
 
-=== Build
+=== Build (CMake — primary)
 
-Debug version:
+[source,bash]
+----
+export VCPKG_ROOT=/path/to/vcpkg
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug
+----
+
+Other presets: `linux-release`, `linux-minimal` (no tests/optional transports),
+`linux-all-features` (drogon/crow/otel/http-client enabled), `linux-asan`/`linux-tsan`/
+`linux-ubsan` (sanitizers), `clang-debug`/`gcc-debug`. See
+`docs/modules/ROOT/pages/architecture/build-systems.adoc` for the full CMake/Xmake
+responsibility matrix — CMake owns install rules, CPack, and CI; Xmake is Linux-only
+smoke coverage.
+
+=== Build (Xmake — secondary)
 
 [source,bash]
 ----
@@ -58,19 +75,12 @@ xmake f -m debug
 xmake -j$(nproc)
 ----
 
-Release version with optimizations:
-
-[source,bash]
-----
-xmake f -m release
-xmake -j$(nproc)
-----
-
 === Installation Check
 
 [source,bash]
 ----
-xmake run create_server --help  # Help output (if implemented)
+cmake --build --preset linux-debug --target create_server
+./build/linux-debug/create_server
 ----
 
 == Quick Start
@@ -325,67 +335,69 @@ graph TD
         end
 
         subgraph "Core Server"
-            S[Server]
-            MS[McpSession]
+            S[McpServer]
+            RH[McpRequestHandler]
+            SS[ServerSession]
+            SM[SessionManager]
             TR[ToolRegistry]
         end
 
-        subgraph "Types"
-            MT[msg_types.hpp]
+        subgraph "Protocol"
+            JC[JsonRpcCodec]
+            PD[ProtocolDialect]
         end
     end
 
     ST -.->|implements| AT
-    S -->|manages| MS
-    MS -->|uses| TR
-    MT -.->|uses| MS
+    S -->|manages| RH
+    SM -->|creates per-connection| SS
+    SS -->|uses| JC
+    SS -->|uses| PD
+    RH -->|uses| TR
 
-    C -->|stdin/stdout| ST
-    ST -->|JSON-RPC| MS
-    TR -->|data types| MT
+    C -->|stdin/stdout, HTTP| ST
+    ST -->|JSON-RPC| RH
 ```
+
+`McpRequestHandler`/`McpServer` is the request-handling pair the bundled
+examples currently run on. `ServerSession`/`SessionManager` is the newer,
+state-machine-based path (see <<Session Lifecycle>>) that request handling is
+being migrated onto.
 
 
 === Session Lifecycle
 
-1. **Uninitialized** → Waiting for `initialize` request
-2. **Initialized** → Initialization received, waiting for `notifications/initialized` notification
-3. **Operation** → Active request processing (`tools/list`, `tools/call`, `ping`)
-4. **Shutdown** → Server termination
+`ServerSession` (the state-machine-based session implementation) models the
+lifecycle as a formal HFSM2 state machine:
 
-== Extensibility
+1. **Uninitialized** → waiting for `initialize`; negotiates a `ProtocolDialect`
+   from the client's requested `protocolVersion` via `JsonRpcCodec`
+2. **Initializing** → `initialize` accepted, waiting for
+   `notifications/initialized` (or a timeout, which moves to **Failed**)
+3. **Operation** → active request processing (`tools/list`, `tools/call`,
+   `ping`), with per-request cancellation via `folly::CancellationSource`
+4. **Stopping** → graceful shutdown, draining in-flight requests until they
+   finish or a settle timeout elapses
+5. **Settled** → terminal state
 
-=== Adding New Content Type
-
-Create a structure in `msg_types.hpp` and add it to `VariantContent`:
-
-[source,cpp]
-----
-struct CustomContent {
-  std::string type = "custom";
-  std::string data;
-  std::string mime_type;
-};
-
-// In msg_types.hpp:
-using VariantContent = std::variant<TextContent, ImageContent, EmbeddedResource, CustomContent>;
-----
-
-=== Supporting New MCP Methods
-
-Extend `McpSession::handle_operation`:
-
-[source,cpp]
-----
-if (request.method == "resources/read") {
-    // Implementation for reading resources
-    return make_response(resources_->read(request), request.id);
-}
-----
+See `docs/modules/ROOT/pages/architecture/server-session-design.adoc` for the
+full design and `docs/modules/ROOT/pages/architecture/index.adoc` for the
+overall SDK architecture and roadmap. Note: the bundled examples
+(`create_server`, `create_server_http`) currently run on the older
+`McpRequestHandler`/`McpServer` pair rather than `ServerSession` directly;
+migrating them is tracked in the Epic 2 implementation plan.
 
 == Testing
 
-The project includes basic examples that serve as integration tests:
+Run the full CTest suite (unit + integration tests) via the CMake preset:
+
+[source,bash]
+----
+ctest --preset linux-debug --output-on-failure
+----
+
+The project also includes example servers that double as manual/integration
+smoke tests:
 
 [source,bash]
 ----
@@ -490,8 +502,8 @@ MIT License
 1. Fork the repository
 2. Create a branch: `git checkout -b feature/my-feature`
 3. Apply formatting: `clang-format -i src/**/*.cpp src/**/*.hpp`
-4. Check static analysis: `xmake check` (if configured)
-5. Submit PR with change description
+4. Build and test locally: `cmake --build --preset linux-debug && ctest --preset linux-debug`
+5. Submit a PR — CI runs the full CMake matrix (gcc/clang, debug/release, all-features, sanitizers) against `devel`
 
 == Credits
 
@@ -517,6 +529,16 @@ A: For flexible work with JSON data without losing type safety.
 **Q: How to add authentication?**
 A: In the current implementation — through custom transport. Built-in support is planned.
 
-== Notes
+== Further Documentation
 
-This README file was automatically generated by an AI assistant (Kimi k2) based on analysis of the PhoenixMCP project source code.
+The `docs/` directory (Antora) has the authoritative architecture reference and
+roadmap:
+
+* `docs/modules/ROOT/pages/architecture/index.adoc` — SDK architecture, module
+  graph, and migration stages
+* `docs/modules/ROOT/pages/architecture/build-systems.adoc` — CMake/Xmake
+  responsibility matrix
+* `docs/modules/ROOT/pages/architecture/server-session-design.adoc` — the
+  `ServerSession` state machine
+* `docs/modules/ROOT/pages/architecture/epic-*-implementation-plan.adoc` —
+  per-epic, per-task implementation plans

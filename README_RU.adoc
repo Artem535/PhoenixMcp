@@ -17,7 +17,7 @@ PhoenixMCP — это современная реализация сервера
 * **Типобезопасная регистрация инструментов** — использование шаблонов C++ для валидации параметров на этапе компиляции
 * **Автоматическая генерация JSON-схем** — через библиотеку reflectcpp на основе структур данных
 * **Гибкая система транспорта** — абстрактный слой, текущая реализация через stdin/stdout
-* **Управление жизненным циклом** — полная реализация стадий: uninitialized → initialized → operation → shutdown
+* **Управление жизненным циклом** — формальный конечный автомат на HFSM2: uninitialized → initializing → operation → stopping → settled (с отдельным путём ошибки failed)
 * **Поддержка разных форматов ответов** — текст, JSON-объекты, изображения (base64)
 * **Продвинутое логирование** — интеграция с spdlog с множеством уровней детализации
 * **Кодовая база промышленного качества** — применение clang-format, clang-tidy и современных практик C++20
@@ -25,8 +25,10 @@ PhoenixMCP — это современная реализация сервера
 == Требования
 
 * Компилятор с полной поддержкой C++20 (GCC 11+, Clang 13+, MSVC 2022+)
-* https://xmake.io[Xmake] 2.8+ — система сборки
-* https://vcpkg.io[Vcpkg] — менеджер пакетов (интегрирован с xmake)
+* https://cmake.org[CMake] 3.28+ с Ninja — основная (authoritative) система сборки
+* https://vcpkg.io[Vcpkg] (manifest mode) — менеджер пакетов, используется через `VCPKG_ROOT`
+* Опционально, https://xmake.io[Xmake] 2.8+ — вторичный workflow с smoke-покрытием только для
+  Linux (см. `docs/modules/ROOT/pages/architecture/build-systems.adoc`)
 * Операционная система: Linux, macOS, Windows (WSL)
 
 == Установка и сборка
@@ -41,14 +43,31 @@ cd PhoenixMcp
 
 === Загрузка зависимостей
 
-Xmake автоматически установит необходимые пакеты через vcpkg:
-- `reflectcpp` — рефлексия и сериализация
-- `yyjson` — быстрый парсер JSON
-- `spdlog` — логирование
+Зависимости объявлены в `vcpkg.json` (manifest mode) и устанавливаются автоматически
+через vcpkg toolchain-файл CMake. Базовый набор: `reflectcpp`, `folly`, `spdlog`,
+`hfsm2`; опциональные vcpkg-фичи добавляют HTTP-транспорты `drogon`/`crow`,
+HTTP-клиент (`openssl`), OpenTelemetry (`otel`) и тестовый набор на `gtest`
+(`tests`) — см. переменную кэша `VCPKG_MANIFEST_FEATURES` для каждого пресета в
+`CMakePresets.json`.
 
-=== Сборка
+=== Сборка (CMake — основной способ)
 
-Отладочная версия:
+[source,bash]
+----
+export VCPKG_ROOT=/path/to/vcpkg
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug
+----
+
+Другие пресеты: `linux-release`, `linux-minimal` (без тестов и опциональных
+транспортов), `linux-all-features` (drogon/crow/otel/http-client включены),
+`linux-asan`/`linux-tsan`/`linux-ubsan` (санитайзеры), `clang-debug`/`gcc-debug`.
+Полная матрица ответственности CMake/Xmake — в
+`docs/modules/ROOT/pages/architecture/build-systems.adoc`: CMake отвечает за
+install-правила, CPack и CI; Xmake — только Linux smoke-покрытие.
+
+=== Сборка (Xmake — вторичный способ)
 
 [source,bash]
 ----
@@ -56,19 +75,12 @@ xmake f -m debug
 xmake -j$(nproc)
 ----
 
-Релизная версия с оптимизациями:
-
-[source,bash]
-----
-xmake f -m release
-xmake -j$(nproc)
-----
-
 === Проверка установки
 
 [source,bash]
 ----
-xmake run create_server --help  # Вывод справки (если реализован)
+cmake --build --preset linux-debug --target create_server
+./build/linux-debug/create_server
 ----
 
 == Быстрый старт
@@ -321,60 +333,57 @@ package "Transport Layer" {
 }
 
 package "Core Server" {
-  [Server] --> [McpSession] : управляет
-  [McpSession] --> [ToolRegistry] : использует
+  [McpServer] --> [McpRequestHandler] : управляет
+  [McpRequestHandler] --> [ToolRegistry] : использует
+  [SessionManager] --> [ServerSession] : создаёт на соединение
 }
 
-package "Types" {
-  [msg_types.hpp] ..> [McpSession]
+package "Protocol" {
+  [ServerSession] --> [JsonRpcCodec] : использует
+  [ServerSession] --> [ProtocolDialect] : использует
 }
 
-Client --> StdioTransport : stdin/stdout
-StdioTransport --> McpSession : JSON-RPC
-ToolRegistry --> msg_types.hpp : типы данных
+Client --> StdioTransport : stdin/stdout, HTTP
+StdioTransport --> McpRequestHandler : JSON-RPC
 @enduml
 ----
 
+`McpRequestHandler`/`McpServer` — пара, на которой сейчас работают встроенные
+примеры. `ServerSession`/`SessionManager` — более новый, основанный на
+конечном автомате путь (см. <<Жизненный цикл сессии>>), на который
+постепенно переводится обработка запросов.
+
 === Жизненный цикл сессии
 
-1. **Uninitialized** → Ожидание запроса `initialize`
-2. **Initialized** → Получена инициализация, ожидание уведомления `notifications/initialized`
-3. **Operation** → Активная обработка запросов (`tools/list`, `tools/call`, `ping`)
-4. **Shutdown** → Завершение работы сервера
+`ServerSession` (реализация сессии на основе конечного автомата) моделирует
+жизненный цикл как формальный HFSM2-автомат:
 
-== Расширение возможностей
+1. **Uninitialized** → ожидание `initialize`; согласовывает `ProtocolDialect`
+   по запрошенной клиентом `protocolVersion` через `JsonRpcCodec`
+2. **Initializing** → `initialize` принят, ожидание
+   `notifications/initialized` (либо таймаут, переводящий в **Failed**)
+3. **Operation** → активная обработка запросов (`tools/list`, `tools/call`,
+   `ping`), с отменой отдельных запросов через `folly::CancellationSource`
+4. **Stopping** → штатное завершение работы: ожидание завершения активных
+   запросов до истечения settle-таймаута
+5. **Settled** → терминальное состояние
 
-=== Добавление нового типа контента
-
-Создайте структуру в `msg_types.hpp` и добавьте в `VariantContent`:
-
-[source,cpp]
-----
-struct CustomContent {
-  std::string type = "custom";
-  std::string data;
-  std::string mime_type;
-};
-
-// В msg_types.hpp:
-using VariantContent = std::variant<TextContent, ImageContent, EmbeddedResource, CustomContent>;
-----
-
-=== Поддержка новых методов MCP
-
-Расширьте `McpSession::handle_operation`:
-
-[source,cpp]
-----
-if (request.method == "resources/read") {
-    // Реализация чтения ресурсов
-    return make_response(resources_->read(request), request.id);
-}
-----
+Подробный дизайн — в
+`docs/modules/ROOT/pages/architecture/server-session-design.adoc`, общая
+архитектура и roadmap — в
+`docs/modules/ROOT/pages/architecture/index.adoc`.
 
 == Тестирование
 
-Проект включает базовые примеры, служащие интеграционными тестами:
+Запустите полный набор тестов CTest (unit + интеграционные) через пресет CMake:
+
+[source,bash]
+----
+ctest --preset linux-debug --output-on-failure
+----
+
+Проект также включает примеры серверов, которые можно использовать как
+ручные/интеграционные smoke-тесты:
 
 [source,bash]
 ----
@@ -480,8 +489,8 @@ MIT License (TODO: добавить LICENSE файл)
 1. Форкните репозиторий
 2. Создайте ветку: `git checkout -b feature/my-feature`
 3. Примените форматирование: `clang-format -i src/**/*.cpp src/**/*.hpp`
-4. Проверьте статический анализ: `xmake check` (если сконфигурировано)
-5. Отправьте PR с описанием изменений
+4. Соберите и протестируйте локально: `cmake --build --preset linux-debug && ctest --preset linux-debug`
+5. Отправьте PR — CI прогонит полную матрицу CMake (gcc/clang, debug/release, all-features, санитайзеры) относительно `devel`
 
 == Благодарности
 
@@ -507,6 +516,15 @@ A: Для гибкой работы с JSON-данными без потери �
 **Q: Как добавить аутентификацию?**
 A: В текущей реализации — через кастомный транспорт. Планируется встроенная поддержка.
 
-== Примечания
+== Дополнительная документация
 
-Этот README файл был автоматически сгенерирован AI-ассистентом(Kimi k2) на основе анализа исходного кода проекта PhoenixMCP.
+Каталог `docs/` (Antora) содержит основную архитектурную документацию и roadmap:
+
+* `docs/modules/ROOT/pages/architecture/index.adoc` — архитектура SDK, граф
+  модулей и этапы миграции
+* `docs/modules/ROOT/pages/architecture/build-systems.adoc` — матрица
+  ответственности CMake/Xmake
+* `docs/modules/ROOT/pages/architecture/server-session-design.adoc` —
+  конечный автомат `ServerSession`
+* `docs/modules/ROOT/pages/architecture/epic-*-implementation-plan.adoc` —
+  планы реализации по эпикам и задачам
