@@ -25,6 +25,12 @@ int StdioTransport::run(Handler on_message) {
 
     ITransport::RequestEnvelope request;
     request.body = std::move(line);
+    // A process only ever owns one stdio channel, so every request here
+    // belongs to that single implicit connection. Leaving connection_id
+    // empty routes all of them to the same session via SessionManager's
+    // shared-default-connection handling (McpRequestHandler) — used as a
+    // single-entry manager, not bypassed — rather than introducing a
+    // stdio-specific code path.
     const auto response =
         folly::coro::blockingWait(on_message(std::move(request)));
     if (!response.has_value()) {

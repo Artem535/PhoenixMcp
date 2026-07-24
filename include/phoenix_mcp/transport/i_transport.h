@@ -22,6 +22,14 @@ class ITransport {
     // should merge it with any protocol-level cancellation source rather
     // than assume it's the only way a request gets cancelled.
     folly::CancellationToken cancel_token;
+    // Stable identity of the underlying connection this request arrived on,
+    // so a session-aware handler (SessionManager) can route repeated
+    // requests from the same connection to the same session. Empty for
+    // transports where every request implicitly belongs to the same single
+    // connection (e.g. stdio, which only ever serves one connection per
+    // process); a session-aware handler treats an empty id as one shared
+    // default connection rather than "no session."
+    std::string connection_id;
   };
 
   struct ResponseEnvelope {

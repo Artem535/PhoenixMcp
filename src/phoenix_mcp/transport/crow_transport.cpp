@@ -52,6 +52,15 @@ int CrowTransport::run(Handler on_message) {
         for (const auto& header : req.headers) {
           request.headers.emplace(header.first, header.second);
         }
+        // Crow's basic routing API exposes no connection object (unlike
+        // Drogon's trantor::TcpConnection::setContext/getContext), so the
+        // peer IP is the best available proxy for connection identity. This
+        // is coarser than a true per-connection key: concurrent connections
+        // from the same client IP (shared NAT, multiple keep-alive
+        // connections from one client) collide onto the same ServerSession.
+        // Acceptable for Crow's role as the secondary/optional HTTP
+        // transport; revisit once Streamable HTTP's Mcp-Session-Id lands.
+        request.connection_id = req.remote_ip_address;
 
         auto task = on_message(std::move(request));
         auto executor = runtime_->cpu_executor();
