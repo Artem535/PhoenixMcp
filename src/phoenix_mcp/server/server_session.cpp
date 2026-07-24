@@ -89,6 +89,7 @@ ServerSession::ServerSession(
       server_capabilities_(std::move(server_capabilities)),
       server_info_(std::move(server_info)),
       instruction_(std::move(instruction)),
+      dialect_(protocol::make_dialect_2025_06_18()),
       fsm_(*this) {}
 // clang-format on
 
@@ -100,26 +101,58 @@ std::optional<rfl::Generic> ServerSession::handle_input(
 
 folly::coro::Task<std::optional<rfl::Generic>> ServerSession::handle_input_async(
     std::string request, folly::CancellationToken cancel_token) {
-  if (const auto req = try_serialize_request(request); req.has_value())
+  auto envelope = protocol::decode_message(request);
+  if (!envelope) {
+    co_return encode_error_response(envelope.error(), msg::types::RequestId{});
+  }
+
+  if (auto* req = std::get_if<msg::types::Request>(&envelope.value())) {
     co_return co_await handle_request_async(*req, std::move(cancel_token));
+  }
 
-  if (const auto notif = try_serialize_notification(request); notif.has_value()) {
-    if (notif->method == msg_t::constants::cancel_notification) {
-      handle_cancel_notification(*notif);
-      co_return std::nullopt;
-    }
-
-    // Handle notifications based on current state
-    std::lock_guard lock(fsm_mutex_);
-    if (is_initializing() &&
-        notif->method == msg_t::constants::initialize_notification) {
-      fsm_.react(InitializedNotification{});
-    }
+  if (std::holds_alternative<msg::types::Notification>(envelope.value())) {
+    handle_notification(envelope.value());
     co_return std::nullopt;
   }
 
-  spdlog::error("handle_input| Parsing Error");
-  co_return std::nullopt;
+  // decode_message can also yield Response/Error shapes (from the JSON-RPC
+  // Response/Error grammar); a server never legitimately receives those from
+  // a client, so treat it the same as an unrecognized envelope.
+  co_return encode_error_response(
+      core::McpError(core::ErrorCode::InvalidRequest,
+                     "expected a JSON-RPC request or notification"),
+      msg::types::RequestId{});
+}
+
+void ServerSession::handle_notification(
+    const protocol::JsonRpcMessage& envelope) {
+  auto decoded = dialect_->decode(envelope);
+  if (!decoded) {
+    spdlog::warn("ServerSession| Failed to decode notification: {}",
+                 decoded.error().message());
+    return;
+  }
+
+  auto* notification = std::get_if<protocol::McpNotification>(&decoded.value());
+  if (!notification) return;
+
+  if (auto* cancel =
+          std::get_if<protocol::CancelNotificationCall>(notification)) {
+    handle_cancel_notification(cancel->notification);
+    return;
+  }
+
+  if (std::holds_alternative<protocol::InitializeNotificationCall>(
+          *notification)) {
+    std::lock_guard lock(fsm_mutex_);
+    if (is_initializing()) {
+      fsm_.react(InitializedNotification{});
+    }
+    return;
+  }
+
+  // ToolListChangedNotificationCall: server-originated in spirit; nothing for
+  // the server to do if a client sends one back.
 }
 
 rfl::Generic ServerSession::handle_request(
@@ -147,7 +180,20 @@ folly::coro::Task<rfl::Generic> ServerSession::handle_request_async(
       if (request.method != msg_t::constants::initialize_request) {
         co_return create_error("Invalid request method", request.id);
       }
+
+      // Transition into the handshake state first (mirrors the existing
+      // "fail from Initializing" pattern used by the deadline check below);
+      // negotiation failure below then fails out of Initializing, not
+      // Uninitialized, since only Initializing reacts to TimeoutExpired.
       fsm_.react(InitializeRequest{});
+
+      auto negotiated = negotiate_dialect(request);
+      if (!negotiated) {
+        fail_initialization(negotiated.error().message());
+        co_return encode_error_response(negotiated.error(), request.id);
+      }
+      dialect_ = std::move(negotiated.value());
+
       co_return make_initialize_response(request.id);
     }
 
@@ -236,51 +282,62 @@ std::string ServerSession::state_name() const {
 
 folly::coro::Task<rfl::Generic> ServerSession::handle_operation_async(
     const msg::types::Request& request, folly::CancellationToken cancel_token) {
-  if (request.method == msg_t::constants::initialize_request) {
+  auto decoded = dialect_->decode(protocol::JsonRpcMessage{request});
+  if (!decoded) {
+    co_return encode_error_response(decoded.error(), request.id);
+  }
+
+  auto* mcp_request = std::get_if<protocol::McpRequest>(&decoded.value());
+  if (!mcp_request) {
+    co_return encode_error_response(
+        core::McpError(core::ErrorCode::InvalidRequest, "expected a request"),
+        request.id);
+  }
+
+  if (std::holds_alternative<protocol::InitializeCall>(*mcp_request)) {
     spdlog::info("ServerSession| Repeated initialize request received.");
     co_return make_initialize_response(request.id);
   }
 
-  if (request.method == msg_t::constants::ping_request) {
+  if (std::holds_alternative<protocol::PingCall>(*mcp_request)) {
     co_return make_response(msg_t::EmptyResult{}, request.id);
   }
 
-  if (request.method == msg_t::constants::list_tools_request) {
+  if (std::holds_alternative<protocol::ListToolsCall>(*mcp_request)) {
     const auto tool_list = tool_registry_->get_tool_list();
     const auto tool_list_res = msg_t::ListToolsResult{.tools = tool_list};
     co_return make_response(tool_list_res, request.id);
   }
 
-  if (request.method == msg_t::constants::call_tool_request) {
-    co_return co_await call_tool_async(request, std::move(cancel_token));
+  if (auto* call = std::get_if<protocol::CallToolCall>(mcp_request)) {
+    co_return co_await call_tool_async(call->request, request.id,
+                                       std::move(cancel_token));
   }
 
   spdlog::error("ServerSession| Method not found: {}", request.method);
-  co_return create_error("Method not found: " + request.method, request.id,
-                         cnt_error::Code::Invalid_request);
+  co_return encode_error_response(
+      core::McpError(core::ErrorCode::MethodNotFound,
+                     "Method not found: " + request.method),
+      request.id);
 }
 
 folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
-    const msg::types::Request& request, folly::CancellationToken cancel_token) {
-  spdlog::debug("ServerSession::call_tool| Call tool {}",
-                rfl::json::write(request));
-
-  const auto generic = rfl::to_generic(request);
-  const auto [flatten, opt_params] =
-      rfl::from_generic<msg_t::CallToolRequest>(generic).value();
-
-  if (!opt_params.has_value()) {
-    co_return create_error("Invalid request", request.id);
+    const msg::types::CallToolRequest& call_request,
+    const msg::types::RequestId& id, folly::CancellationToken cancel_token) {
+  if (!call_request.params.has_value()) {
+    co_return encode_error_response(
+        core::McpError(core::ErrorCode::InvalidParams, "Invalid request"),
+        id);
   }
 
-  const auto [name, arguments] = opt_params.value();
+  const auto& [name, arguments] = call_request.params.value();
 
   spdlog::debug("ServerSession::call_tool| Call tool, name: {}", name);
   spdlog::debug("ServerSession::call_tool| Call tool, args: {}",
                 rfl::json::write(arguments));
 
   const PendingRequestGuard guard(cancellations_mutex_, pending_cancellations_,
-                                  request.id);
+                                  id);
   const auto merged_token =
       folly::cancellation_token_merge(cancel_token, guard.token());
 
@@ -291,28 +348,26 @@ folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
     // token entirely); surface cancellation uniformly here rather than
     // trusting each tool to encode it in its own result.
     if (merged_token.isCancellationRequested()) {
-      co_return create_error("Request was cancelled", request.id,
+      co_return create_error("Request was cancelled", id,
                              cnt_error::Code::Request_cancelled);
     }
-    co_return make_response(result, request.id);
+    co_return make_response(result, id);
   } catch (const std::exception& e) {
     spdlog::error("ServerSession::call_tool| Tool '{}' threw: {}", name,
                   e.what());
     co_return create_error(std::string("Tool execution failed: ") + e.what(),
-                           request.id, cnt_error::Code::Internal_error);
+                           id, cnt_error::Code::Internal_error);
   }
 }
 
 void ServerSession::handle_cancel_notification(
-    const msg::types::Notification& notif) {
-  const auto generic = rfl::to_generic(notif);
-  const auto parsed = rfl::from_generic<msg_t::CancelNotification>(generic);
-  if (!parsed.has_value() || !parsed.value().params.has_value()) {
+    const msg::types::CancelNotification& notif) {
+  if (!notif.params.has_value()) {
     spdlog::warn("ServerSession| Malformed 'notifications/cancelled', ignoring");
     return;
   }
 
-  const auto& params = parsed.value().params.value();
+  const auto& params = notif.params.value();
   const msg_t::RequestId target_id = params.request_id.value();
 
   std::lock_guard lock(cancellations_mutex_);
@@ -323,24 +378,57 @@ void ServerSession::handle_cancel_notification(
   }
 }
 
-std::optional<msg::types::Request> ServerSession::try_serialize_request(
-    const std::string& request) {
-  std::optional<msg::types::Request> request_ = std::nullopt;
-  try {
-    request_ = rfl::json::read<msg::types::Request>(request).value();
-  } catch (const std::exception& e) {
-    spdlog::error("Failed to serialize request: {}", e.what());
+folly::Expected<std::unique_ptr<protocol::ProtocolDialect>, core::McpError>
+ServerSession::negotiate_dialect(
+    const msg::types::Request& initialize_request) const {
+  auto decoded =
+      dialect_->decode(protocol::JsonRpcMessage{initialize_request});
+  if (!decoded) {
+    return folly::makeUnexpected(decoded.error());
   }
-  return request_;
+
+  auto* mcp_request = std::get_if<protocol::McpRequest>(&decoded.value());
+  auto* init_call =
+      mcp_request ? std::get_if<protocol::InitializeCall>(mcp_request)
+                  : nullptr;
+  if (!init_call) {
+    return folly::makeUnexpected(core::McpError(
+        core::ErrorCode::InvalidRequest, "expected an initialize request"));
+  }
+
+  const auto& raw_params = init_call->request.flatten.get().params;
+  if (!raw_params.has_value()) {
+    return folly::makeUnexpected(
+        core::McpError(core::ErrorCode::InvalidParams,
+                       "initialize request is missing params"));
+  }
+
+  const auto params =
+      rfl::from_generic<msg_t::InitializeParams>(raw_params.value());
+  if (!params) {
+    return folly::makeUnexpected(
+        core::McpError(core::ErrorCode::InvalidParams,
+                       "initialize request has malformed params"));
+  }
+
+  const auto& requested_version = params.value().protocol_version.get();
+  auto negotiated = protocol::make_dialect(requested_version);
+  if (!negotiated) {
+    return folly::makeUnexpected(core::McpError(
+        core::ErrorCode::InvalidRequest,
+        "unsupported protocol version: " + requested_version));
+  }
+
+  return negotiated;
 }
 
-std::optional<msg::types::Notification>
-ServerSession::try_serialize_notification(const std::string& json) {
-  try {
-    return rfl::json::read<msg::types::Notification>(json).value();
-  } catch (...) {
-    return std::nullopt;
+rfl::Generic ServerSession::encode_error_response(
+    const core::McpError& error, const msg::types::RequestId& id) const {
+  auto encoded = dialect_->encode_error(id, error);
+  if (!encoded) {
+    return create_error(encoded.error().message(), id);
   }
+  return rfl::to_generic(*encoded);
 }
 
 rfl::Generic ServerSession::make_initialize_response(

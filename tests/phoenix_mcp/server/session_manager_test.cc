@@ -45,7 +45,10 @@ TEST(SessionManagerTest, CreateSessionReturnsDistinctSessionsPerConnection) {
   EXPECT_NE(session_a, session_b);
   EXPECT_EQ(manager->session_count(), 2u);
 
-  session_a->handle_input(R"({"jsonrpc":"2.0","method":"initialize","id":1})");
+  session_a->handle_input(
+      R"({"jsonrpc":"2.0","method":"initialize","id":1,)"
+      R"("params":{"protocolVersion":"2025-06-18","capabilities":{},)"
+      R"("clientInfo":{"name":"test-client","version":"0.0.0"}}})");
   EXPECT_EQ(session_a->state_name(), "Initializing");
   EXPECT_EQ(session_b->state_name(), "Uninitialized");
 }
