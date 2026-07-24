@@ -45,6 +45,48 @@ std::string connection_id_for(const drogon::HttpRequestPtr& req) {
   return "drogon-" + conn->peerAddr().toIpPort();
 }
 
+// Resolves (creating on first sight of `connection_id`) the
+// CancellationSource for this connection, wiring it to fire when the
+// connection actually closes, and returns its token.
+//
+// This chains onto the connection's existing close callback rather than
+// overwriting it with conn->setCloseCallback(...) directly: that's a
+// single shared callback slot, and Drogon (or other middleware) may
+// already be using it for its own bookkeeping -- the same class of hazard
+// as the setContext/getContext bug above, just for a different slot. The
+// callback and the map it touches are only ever installed once per
+// connection (on the first request), so a keep-alive connection handling
+// many requests doesn't grow a callback chain per request; an uncancelled
+// CancellationSource is safe to keep reusing across those requests.
+folly::CancellationToken resolve_cancel_token(
+    std::mutex& mutex,
+    std::unordered_map<std::string, folly::CancellationSource>& sources,
+    const std::string& connection_id, const drogon::HttpRequestPtr& req) {
+  std::lock_guard lock(mutex);
+  auto [it, inserted] = sources.try_emplace(connection_id);
+  if (inserted) {
+    if (auto conn = req->getConnectionPtr().lock()) {
+      auto existing_close_cb = conn->getCloseCallback();
+      conn->setCloseCallback(
+          [&mutex, &sources, connection_id,
+           existing_close_cb](const trantor::TcpConnectionPtr& c) {
+            if (existing_close_cb) existing_close_cb(c);
+            std::lock_guard inner_lock(mutex);
+            if (auto found = sources.find(connection_id);
+                found != sources.end()) {
+              spdlog::info(
+                  "DrogonTransport| connection '{}' closed, cancelling any "
+                  "in-flight request on it",
+                  connection_id);
+              found->second.requestCancellation();
+              sources.erase(found);
+            }
+          });
+    }
+  }
+  return it->second.getToken();
+}
+
 }  // namespace
 #endif
 
@@ -83,7 +125,7 @@ int DrogonTransport::run(Handler on_message) {
 
   app.registerHandler(
       endpoint,
-      [on_message = std::move(on_message), runtime = runtime_](
+      [this, on_message = std::move(on_message), runtime = runtime_](
           const drogon::HttpRequestPtr& req,
           std::function<void(const drogon::HttpResponsePtr&)>&&
               callback) mutable {
@@ -102,6 +144,9 @@ int DrogonTransport::run(Handler on_message) {
           request.headers.emplace(header_name, header_value);
         }
         request.connection_id = connection_id_for(req);
+        request.cancel_token =
+            resolve_cancel_token(cancel_sources_mutex_, cancel_sources_,
+                                request.connection_id, req);
 
         std::move(on_message(std::move(request)))
             .scheduleOn(runtime->cpu_executor())

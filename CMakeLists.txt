@@ -254,6 +254,11 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_mcp_request_handler_test
     PRIVATE PhoenixMcp::Server GTest::gtest_main)
 
+  add_executable(phoenix_mcp_stdio_transport_test
+    tests/phoenix_mcp/transport/stdio_transport_test.cc)
+  target_link_libraries(phoenix_mcp_stdio_transport_test
+    PRIVATE PhoenixMcp::Server PhoenixMcp::TransportStdio GTest::gtest_main)
+
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
   gtest_discover_tests(phoenix_mcp_json_rpc_codec_test)
   gtest_discover_tests(phoenix_mcp_dialect_test)
@@ -261,6 +266,7 @@ if(BUILD_TESTING)
   gtest_discover_tests(phoenix_mcp_server_session_test)
   gtest_discover_tests(phoenix_mcp_session_manager_test)
   gtest_discover_tests(phoenix_mcp_mcp_request_handler_test)
+  gtest_discover_tests(phoenix_mcp_stdio_transport_test)
 
   add_test(
     NAME phoenix_mcp_public_headers

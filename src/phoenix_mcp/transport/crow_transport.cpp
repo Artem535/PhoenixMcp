@@ -61,6 +61,15 @@ int CrowTransport::run(Handler on_message) {
         // Acceptable for Crow's role as the secondary/optional HTTP
         // transport; revisit once Streamable HTTP's Mcp-Session-Id lands.
         request.connection_id = req.remote_ip_address;
+        // request.cancel_token deliberately left at its never-cancels
+        // default: Crow's basic routing API exposes no connection object at
+        // all (see the connection_id comment above — crow::request has no
+        // analogue of Drogon's trantor::TcpConnection, no close-callback
+        // hook, nothing to attach disconnect detection to). Real transport-
+        // level cancellation isn't achievable here without dropping to a
+        // lower-level Crow API than crow::SimpleApp's route_dynamic offers.
+        // Documented rather than silently left unwired; revisit if Crow
+        // gets more than secondary/optional status.
 
         auto task = on_message(std::move(request));
         auto executor = runtime_->cpu_executor();
