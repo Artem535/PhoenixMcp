@@ -1,0 +1,235 @@
+= PhoenixMcp Epic 2 Implementation Plan: Protocol and Server
+:toc:
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> `superpowers:subagent-driven-development` (recommended) or
+> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Finish the `0.3.0`–`0.4.0` milestone from
+xref:architecture/index.adoc[SDK architecture]'s migration stages: a
+canonical protocol model with dialect negotiation, per-connection session
+isolation, a real bounded transport contract, Streamable HTTP, and server
+conformance — while the current server-only behavior keeps working
+throughout.
+
+**Status as of this plan's authoring:** issues #15 (McpError), #16
+(JsonRpcCodec), and #17 (ProtocolDialect) are implemented; issue #18
+(ServerSession state machine, SessionManager, bounded envelopes,
+cancellation, graceful shutdown) is implemented. None of this is wired
+together yet — that gap, plus Streamable HTTP and conformance, is this
+plan's actual scope. See <<Verified starting state>>.
+
+**Tech Stack:** C++20, Folly (`folly::coro::Task`, `folly::CancellationToken`),
+reflect-cpp, GoogleTest/GoogleMock, Drogon (primary HTTP adapter), Crow
+(optional compatibility adapter), CTest.
+
+== Verified starting state
+
+Read directly from the branches carrying #15–#18 (not yet merged as a whole;
+see the individual PRs) before writing this plan, so the task list below
+describes real gaps, not assumed ones:
+
+* `ServerSession` (`include/phoenix_mcp/server/server_session.h`) implements
+  the full state machine (`Uninitialized → Initializing → Operation →
+  Stopping → Settled`, with a `Failed` error path) and does not use
+  `JsonRpcCodec` or `ProtocolDialect` anywhere in its parse/dispatch path —
+  `grep` for both symbols in `server_session.cpp` returns nothing. It still
+  parses and dispatches ad hoc.
+* `SessionManager` (`include/phoenix_mcp/server/session_manager.h`) builds
+  and tracks one `ServerSession` per connection via a factory, with idle
+  timeout and a session cap, but its own header says it plainly: "Not wired
+  into any transport yet: transports/McpRequestHandler still use a single,
+  process-lifetime ServerSession."
+* `ITransport::RequestEnvelope` carries a `cancel_token`, but its own comment
+  says "None of the current transports wire this up yet" — a client
+  disconnect does not currently cancel anything.
+* `DrogonTransport::run()` (`src/phoenix_mcp/transport/drogon_transport.cpp`)
+  is a single-shot `POST` handler returning one JSON body. There is no
+  `Mcp-Session-Id` header, no `GET` SSE stream, no `DELETE` for session
+  termination, and no resumability. This is not Streamable HTTP yet — it is
+  plain JSON-RPC-over-HTTP.
+* No conformance suite of any kind exists (`tests/phoenix_mcp/` has no
+  `conformance/` directory).
+
+== Global constraints
+
+* Use `rtk` for every shell command and `rtk git` for Git inspection.
+* Preserve existing stdio and HTTP examples throughout; no task in this plan
+  may leave `create_server` or `create_server_http` broken partway through.
+* One `ServerSession` per connection is a hard invariant once Task 2 lands;
+  no shared, process-lifetime session may remain reachable from a transport
+  after that task's commit.
+* Follow the code-style and CMake/Xmake rules in
+  xref:architecture/code-style.adoc[Code style] and
+  xref:architecture/build-systems.adoc[Build systems]: `.h`/`.cc`, Google
+  include order, hand-maintained `CMakeLists.txt`, Xmake mirrors targets.
+
+== File map
+
+* Modify `src/phoenix_mcp/server/server_session.cc` (or `.cpp`, matching
+  whatever extension lands with #18) to route through `JsonRpcCodec` and a
+  negotiated `ProtocolDialect`.
+* Modify `src/phoenix_mcp/server/mcp_request_handler.*` and each transport
+  (`stdio_transport.cc`, `drogon_transport.cc`, `crow_transport.cc`) to
+  construct and use a `SessionManager` instead of one shared session.
+* Modify each transport to wire real disconnect detection into
+  `RequestEnvelope::cancel_token`.
+* Modify `include/phoenix_mcp/transport/drogon_transport.h` and its `.cc` to
+  add SSE, session-ID, and `DELETE` handling.
+* Create `tests/phoenix_mcp/conformance/` for the new conformance suite.
+* Create `tests/phoenix_mcp/transport/streamable_http_test.cc`.
+* Modify `docs/modules/ROOT/pages/architecture/index.adoc` if the module
+  graph or lifecycle diagram needs updates once Streamable HTTP lands.
+
+== Tasks
+
+=== Task 1: Route ServerSession through JsonRpcCodec and ProtocolDialect
+
+*Files:* `src/phoenix_mcp/server/server_session.cc`,
+`tests/phoenix_mcp/server/server_session_test.cc`.
+
+*Consumes:* #16's `JsonRpcCodec`, #17's `ProtocolDialect` and its
+`2025-06-18` implementation.
+*Produces:* a session whose parse/dispatch path is the one described in
+xref:architecture/index.adoc[SDK architecture]'s Protocol section
+(`Raw transport envelope → JsonRpcCodec → ProtocolDialect → ServerSession →
+Capability`), instead of ad hoc parsing.
+
+- [ ] Write a failing test asserting `ServerSession::handle_input` rejects a
+  malformed JSON-RPC envelope with the exact `McpError` category/code
+  `JsonRpcCodec` would produce (not a session-local error path).
+- [ ] Replace `ServerSession`'s internal parsing with a call into
+  `JsonRpcCodec::decode`, then dispatch the decoded `Message` through the
+  dialect returned by `make_dialect("2025-06-18")`.
+- [ ] Confirm `initialize` negotiation now reads the client's requested
+  `protocolVersion` and calls `make_dialect` with it, failing with a
+  `Protocol`-category `McpError` (not a generic one) when unsupported.
+- [ ] Run the full `server_session_test.cc` and `dialect_test.cc` suites;
+  confirm no regression in existing passing cases.
+- [ ] Commit with `refactor: route ServerSession through JsonRpcCodec and ProtocolDialect`.
+
+=== Task 2: Wire SessionManager into every transport
+
+*Files:* `src/phoenix_mcp/server/mcp_request_handler.*`,
+`src/phoenix_mcp/transport/stdio_transport.cc`,
+`src/phoenix_mcp/transport/drogon_transport.cc`,
+`src/phoenix_mcp/transport/crow_transport.cc`,
+`tests/phoenix_mcp/server/session_manager_test.cc`.
+
+*Consumes:* Task 1's dialect-aware `ServerSession`, #18's `SessionManager`.
+*Produces:* the acceptance criterion from #18 that's still open — "Per-
+connection isolation — each connection gets its own `ServerSession`" —
+actually true end-to-end, not just true of the `SessionManager` class in
+isolation.
+
+- [ ] Write a failing integration test that opens two concurrent stdio (or
+  in-memory) connections, sends conflicting `initialize` sequences on each,
+  and asserts neither session observes the other's state.
+- [ ] For stdio: since one process owns exactly one stdio channel, decide
+  and document whether `SessionManager` here is a single-entry manager (one
+  connection ⇒ one session, still exercising the same code path as HTTP) or
+  whether stdio bypasses it by design; do not leave this undecided in code.
+- [ ] For Drogon and Crow: derive a stable per-connection key (session ID
+  once Task 3 exists, or transport-assigned connection ID before that) and
+  route each request to `SessionManager::create_session` /
+  the existing session for that key instead of one shared `ServerSession`.
+- [ ] Run the new integration test and the existing transport tests.
+- [ ] Commit with `feat: wire SessionManager into stdio, Drogon, and Crow transports`.
+
+=== Task 3: Wire transport-level cancellation
+
+*Files:* each transport's `.cc`, `include/phoenix_mcp/transport/i_transport.h`
+if the contract needs adjusting, `tests/phoenix_mcp/transport/`.
+
+*Consumes:* Task 2's per-connection sessions, `folly::CancellationSource`.
+*Produces:* the #18 acceptance criterion "Cancellation support via
+`folly::CancellationSource`" actually reaching the transport layer, per
+xref:architecture/index.adoc[SDK architecture]'s statement that "remote
+cancellation, a deadline, disconnect, or shutdown requests cancellation
+through the token."
+
+- [ ] Write a failing test that starts a long-running tool call, simulates a
+  transport-level disconnect (close the stdio pipe / drop the HTTP
+  connection), and asserts the handler's `folly::CancellationToken` observes
+  cancellation within a bounded time.
+- [ ] Implement disconnect detection per transport and cancel the matching
+  `RequestEnvelope::cancel_token`'s source.
+- [ ] Confirm `ServerSession` already merges transport-level and
+  protocol-level (`notifications/cancelled`) cancellation correctly — this
+  was designed in #18 but never exercised by a transport before now.
+- [ ] Commit with `feat: propagate transport disconnects as request cancellation`.
+
+=== Task 4: Streamable HTTP on DrogonTransport
+
+*Files:* `include/phoenix_mcp/transport/drogon_transport.h`,
+`src/phoenix_mcp/transport/drogon_transport.cc`,
+`tests/phoenix_mcp/transport/streamable_http_test.cc`.
+
+*Consumes:* Task 2's per-connection sessions (an HTTP session ID is exactly
+the per-connection key that task needs), Task 3's cancellation wiring.
+*Produces:* the actual "Streamable HTTP" capability named in
+xref:architecture/index.adoc[SDK architecture]'s migration stages — not
+present at all today (see <<Verified starting state>>).
+
+- [ ] Write a failing test asserting a `POST` without an `Mcp-Session-Id`
+  header on a non-`initialize` request returns `404` (per the MCP
+  Streamable HTTP transport spec), and that `initialize` returns a fresh
+  session ID header.
+- [ ] Add `Mcp-Session-Id` issuance on `initialize` and validation on every
+  subsequent request; map an unknown/expired ID to `404`, not `500`.
+- [ ] Add the `GET` SSE endpoint for server-initiated messages on an
+  established session, and `DELETE` for explicit client-initiated session
+  termination.
+- [ ] Add resumability via the `Last-Event-ID` header for the SSE stream, per
+  spec; if full replay is out of scope for `0.4.0`, document that
+  explicitly in this task's commit rather than silently omitting it.
+- [ ] Decide and document whether `CrowTransport` gets the same treatment in
+  this epic or is explicitly deferred (it is the optional compatibility
+  adapter per xref:architecture/index.adoc[SDK architecture]; do not silently
+  let it drift behind Drogon without saying so).
+- [ ] Commit with `feat: implement Streamable HTTP session and SSE semantics in DrogonTransport`.
+
+=== Task 5: Server conformance suite
+
+*Files:* `tests/phoenix_mcp/conformance/`, `CMakeLists.txt`,
+`.github/workflows/ci.yml` (new conformance job, per
+xref:architecture/index.adoc[SDK architecture]'s verification diagram:
+"Conformance: Official MCP conformance: client and server → CI").
+
+*Consumes:* Tasks 1–4 (a session that speaks the real protocol over both
+stdio and Streamable HTTP).
+*Produces:* the "server conformance" item from the `0.3.0`–`0.4.0` milestone
+and the first half of the verification architecture's conformance box (the
+client half belongs to Epic 3).
+
+- [ ] Identify or vendor a server-conformance fixture set for MCP
+  `2025-06-18` (official test suite if available at implementation time;
+  otherwise a hand-written black-box suite covering initialize handshake,
+  capability negotiation, tool listing/calling, and error-path behavior).
+- [ ] Wire it as CTest targets distinct from unit tests (a
+  `phoenix_mcp_conformance_server` binary or equivalent), runnable against
+  both the stdio and Streamable HTTP transports built in this epic.
+- [ ] Add a CI job for the conformance suite; do not fold it into the
+  existing `cmake-linux` matrix job silently — it has a different failure
+  mode (spec compliance, not build/link) and should be visible as its own
+  check.
+- [ ] Commit with `test: add MCP server conformance suite`.
+
+== Plan self-review
+
+*Coverage:* Tasks 1–3 close the gap between what #15–#18 built and what
+xref:architecture/index.adoc[SDK architecture] actually requires of them
+(dialect-routed sessions, real per-connection isolation, real
+cancellation). Tasks 4–5 add the two migration-stage items that had no
+code at all yet (Streamable HTTP, server conformance).
+
+*Consistency:* Every task builds on the previous one in order (dialect
+routing before session wiring, session wiring before an HTTP session ID
+scheme needs one, cancellation wiring before conformance tests can assert on
+it).
+
+*Scope:* Client-side conformance, `ClientSession`, and `Host` are excluded —
+they are Epic 3. Resources, prompts, and progress notifications are
+excluded — they are Epic 4. Fuzzing the parsers built in #16/#17 is
+excluded — it is Epic 5.

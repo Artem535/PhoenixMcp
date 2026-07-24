@@ -1,0 +1,235 @@
+= PhoenixMcp Epic 5 Implementation Plan: Stabilization
+:toc:
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> `superpowers:subagent-driven-development` (recommended) or
+> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Deliver the `0.9.0`–`1.0.0` milestone from
+xref:architecture/index.adoc[SDK architecture]'s migration stages:
+fuzzing, fault injection, performance and cross-platform baselines,
+documentation completeness, the API freeze, and Tier 2 conformance
+readiness — the gate before `1.0.0`.
+
+**Blocked by:** Epics 2–4. Fuzzing targets the parsers and dispatchers those
+epics build; performance baselines need the full request path to exist;
+the API freeze needs a finished public surface to freeze.
+
+**Tech Stack:** C++20, libFuzzer or AFL++ (whichever integrates more simply
+with the existing CMake/Ninja setup), Google Benchmark or a hand-rolled
+throughput harness, MSVC and AppleClang (via the already-defined
+`windows-msvc`/`macos-clang` presets), CTest.
+
+== Starting state
+
+`CMakePresets.json` already defines `windows-msvc` and `macos-clang`
+configure/build/test presets (from #6's Task 4 in
+xref:architecture/epic-0-1-implementation-plan.adoc[Epic 0–1's plan]), but
+neither appears in `.github/workflows/ci.yml`'s matrix — Epic 0–1's CI work
+(issue #10) scoped itself to Linux only. `PhoenixMcp::Testing` exists as an
+empty `INTERFACE` target with no in-memory transport or fault-injection
+code behind it yet, despite
+xref:architecture/index.adoc[SDK architecture] describing it as supplying
+"an in-memory duplex transport, deterministic test runtime, fixtures, and
+programmable fault injection." No fuzzing harness, benchmark harness, or
+migration guide exists anywhere in the repository.
+
+== Global constraints
+
+* Use `rtk` for every shell command and `rtk git` for Git inspection.
+* Fuzzing and benchmark jobs are separate CI concerns from the correctness
+  matrix (issue #10's `cmake-linux`/`xmake-linux` jobs) — do not fold them
+  into that matrix; give them their own jobs with their own pass/fail
+  semantics (a fuzz job "passing" means no crash in a fixed time budget or
+  iteration count, not that tests were green).
+* The API freeze task is a review-and-document task, not a rewrite: it
+  audits `PhoenixMcp::*` public headers against
+  xref:architecture/index.adoc[SDK architecture]'s "Public API and
+  compatibility" section and either confirms compliance or files follow-up
+  tasks — it does not itself redesign the API.
+* Until `1.0.0`, protocol compatibility does not imply binary compatibility
+  (per the architecture doc); do not add binary-compatibility guarantees as
+  part of this epic unless explicitly re-scoped.
+
+== File map
+
+* Create `tests/phoenix_mcp/fuzz/{json_rpc_codec_fuzz.cc,
+  dialect_decode_fuzz.cc,http_header_fuzz.cc,sse_parser_fuzz.cc}`.
+* Create `include/phoenix_mcp/testing/{in_memory_transport.h,
+  fault_injector.h,deterministic_runtime.h}` and matching
+  `src/phoenix_mcp/testing/*.cc` — the actual content behind
+  `PhoenixMcp::Testing`.
+* Create `benchmarks/` (throughput/latency harness), gated by the existing
+  but currently-unused `PHOENIX_MCP_BUILD_BENCHMARKS` option (defined off
+  by default per Epic 0–1's Task 2).
+* Modify `.github/workflows/ci.yml` to add `windows-msvc`, `macos-clang`,
+  a fuzzing job, and a benchmark-regression job.
+* Create `docs/modules/ROOT/pages/migration/` (empty in the documented
+  layout today) with the first real migration guide entry.
+* Create an API-freeze audit document (location TBD at task time — likely
+  `docs/modules/ROOT/pages/architecture/api-freeze-audit.adoc`).
+
+== Tasks
+
+=== Task 1: Fuzzing harness
+
+*Files:* `tests/phoenix_mcp/fuzz/*.cc`, `CMakeLists.txt`,
+`.github/workflows/ci.yml`.
+
+*Consumes:* Epic 2's `JsonRpcCodec`/`ProtocolDialect`, Epic 2 Task 4's HTTP
+header/SSE parsing.
+*Produces:* the "Fuzz: parsers, dispatcher, headers, SSE → CI" box from
+xref:architecture/index.adoc[SDK architecture]'s verification diagram.
+
+- [ ] Pick libFuzzer (simplest with Clang, already a supported compiler via
+  `clang-debug`) or AFL++; document the choice and why in the task's
+  commit rather than leaving it implicit.
+- [ ] Add fuzz targets for `JsonRpcCodec::decode`, `ProtocolDialect::decode`,
+  the Streamable HTTP header parsing (`Mcp-Session-Id`, `Last-Event-ID`),
+  and the SSE frame parser.
+- [ ] Add a CI job that runs each target for a fixed time budget (e.g. 60s
+  per target in normal CI, longer in a scheduled/nightly job if the
+  project wants deeper coverage) and fails on any crash or sanitizer
+  finding — reuse `linux-asan` for the fuzz build so memory bugs surface,
+  not just logic crashes.
+- [ ] Commit with `test: add fuzzing harness for protocol parsers`.
+
+=== Task 2: Fault injection via PhoenixMcp::Testing
+
+*Files:* `include/phoenix_mcp/testing/*.h`,
+`src/phoenix_mcp/testing/*.cc`, `tests/phoenix_mcp/testing/`.
+
+*Consumes:* Epic 2/3's transport contracts (the in-memory transport
+implements the same `ITransport` interface those epics defined).
+*Produces:* the actual content behind `PhoenixMcp::Testing`, currently an
+empty `INTERFACE` target — an in-memory duplex transport, a deterministic
+test runtime, fixtures, and programmable fault injection, exactly as
+xref:architecture/index.adoc[SDK architecture] already describes the
+module.
+
+- [ ] Write a failing test using the not-yet-built in-memory transport to
+  connect a `ClientSession` and `ServerSession` in-process with no real
+  I/O, and complete a full request/response round trip.
+- [ ] Implement the in-memory duplex transport and a deterministic runtime
+  (fake clock, controllable executor) so tests never depend on real wall
+  time or thread scheduling.
+- [ ] Implement programmable fault injection (drop a message, delay a
+  message, truncate a message, simulate a mid-stream disconnect) as
+  composable decorators over the in-memory transport.
+- [ ] Migrate at least one existing integration test (e.g. from Epic 2 or
+  3) to use this instead of a real transport, as a concrete proof the
+  module works, not just an isolated demo.
+- [ ] Commit with `feat: implement PhoenixMcp::Testing in-memory transport and fault injection`.
+
+=== Task 3: Performance baselines
+
+*Files:* `benchmarks/`, `cmake/PhoenixMcpOptions.cmake` (verify
+`PHOENIX_MCP_BUILD_BENCHMARKS` wiring), `.github/workflows/ci.yml`.
+
+*Consumes:* Task 2's deterministic runtime (useful for isolating handler
+overhead from real I/O jitter in latency measurements).
+*Produces:* the "Performance ... baselines" item from the milestone, with
+an actual regression gate, not just numbers nobody looks at.
+
+- [ ] Define the benchmark scenarios that matter for an MCP server SDK:
+  message decode/encode throughput, tool-call dispatch latency
+  (in-memory transport, to isolate SDK overhead from network), and
+  concurrent-session scaling behavior.
+- [ ] Implement the harness under `benchmarks/`, wired to the existing
+  `PHOENIX_MCP_BUILD_BENCHMARKS` CMake option.
+- [ ] Add a CI job that runs benchmarks and fails (or at minimum loudly
+  flags) on a regression past a defined threshold versus a stored
+  baseline — a benchmark job that only prints numbers with nobody
+  reading them is not a gate.
+- [ ] Commit with `test: add performance benchmark harness and regression gate`.
+
+=== Task 4: Cross-platform baselines
+
+*Files:* `.github/workflows/ci.yml`.
+
+*Consumes:* the already-defined `windows-msvc`/`macos-clang` CMake presets
+(Epic 0–1, not yet exercised in CI).
+*Produces:* the "cross-platform baselines" item — actual CI coverage on
+Windows and macOS, not just presets that exist unused in
+`CMakePresets.json`.
+
+- [ ] Add `windows-msvc` and `macos-clang` jobs to `.github/workflows/ci.yml`
+  using `windows-latest`/`macos-latest` runners, following the same
+  vcpkg-bootstrap-and-cache pattern issue #10 established for Linux.
+- [ ] Fix whatever breaks first when these presets are exercised for real —
+  expect this to surface genuine platform-specific bugs (path separators,
+  case sensitivity, MSVC-specific warnings-as-errors friction), the same
+  way issue #10's Linux work surfaced the `GNUInstallDirs`/`BUILD_TESTING`
+  ordering bug and the sanitizer-`PRIVATE`-visibility bug that nobody had
+  hit before running the real matrix.
+- [ ] Decide whether these become required checks (per issue #10's
+  branch-protection precedent) or stay informational initially while
+  platform-specific issues are worked through; document the decision.
+- [ ] Commit with `ci: add Windows MSVC and macOS Clang jobs`.
+
+=== Task 5: Documentation completeness and migration guide
+
+*Files:* `docs/modules/ROOT/pages/migration/`, README updates as needed.
+
+*Consumes:* Epics 2–4 (there is nothing to document a migration path for
+until the capabilities exist).
+*Produces:* the documented-but-empty `migration/` directory in
+xref:architecture/index.adoc[SDK architecture]'s "Documentation layout"
+actually populated, and a documentation-completeness pass across
+`server/`, `client/`, `host/`, `protocol/`, `security/`, `observability/`
+— all currently empty per that same layout listing.
+- [ ] Audit every directory in the documented layout
+  (`getting-started/`, `server/`, `client/`, `host/`, `protocol/`,
+  `security/`, `observability/`, `migration/`) against what actually
+  exists; each should have at least a landing page once Epics 2–4 ship.
+- [ ] Write the first real migration-guide entry: pre-`0.2.0` `pxm`
+  namespace users moving to `phoenix_mcp`, since that compatibility shim
+  is explicitly temporary per the architecture doc.
+- [ ] Commit with `docs: complete architecture documentation and add migration guide`.
+
+=== Task 6: API freeze audit and Tier 2 conformance readiness
+
+*Files:* API-freeze audit document, conformance suite from Epic 2 Task 5
+extended to cover client-side conformance.
+
+*Consumes:* everything in Epics 2–4; this is the last task in the project's
+`1.0.0` gate.
+*Produces:* a documented API-freeze decision and the "Fuzz ... Sanitizers"
+verification diagram box's remaining item — Tier 2 conformance readiness
+for both client and server roles (Epic 2 Task 5 covered server only).
+
+- [ ] Audit every `PhoenixMcp::*` public header against the "Public API and
+  compatibility" section of xref:architecture/index.adoc[SDK
+  architecture]: namespace discipline, no leaked implementation types, no
+  leaked Drogon/Crow types through public headers (an explicit rule for
+  `TransportDrogon`/`TransportCrow`).
+- [ ] Extend Epic 2's conformance suite with client-role conformance tests
+  (the `ClientSession`/`Host` work from Epic 3 gives something to test).
+- [ ] Produce the audit document with either a sign-off or a list of
+  follow-up tasks required before the freeze is real; do not mark this
+  complete while known violations remain undocumented.
+- [ ] Commit with `docs: complete API freeze audit and Tier 2 conformance readiness`.
+
+== Plan self-review
+
+*Coverage:* Tasks 1–2 deliver the verification-architecture items
+(fuzzing, fault injection) that had zero code behind them. Task 3 delivers
+performance baselines with an actual gate. Task 4 activates
+cross-platform presets that already existed but were never run in CI.
+Task 5 fills the documented-but-empty documentation layout. Task 6 closes
+the milestone with the API freeze and Tier 2 conformance.
+
+*Consistency:* Every task references concrete, already-existing artifacts
+(the unused MSVC/macOS presets, the empty `PhoenixMcp::Testing` target,
+the empty `migration/` directory) rather than restating the architecture
+doc's goals abstractly — the same "verify what's actually there, not what
+should be there" discipline issue #10 applied when it found the
+`GNUInstallDirs` and sanitizer-visibility bugs by actually running the
+matrix instead of assuming presets worked.
+
+*Scope:* This plan assumes Epics 2–4 shipped their stated scope; it does
+not re-litigate or expand their scope. Anything discovered missing from an
+earlier epic during this epic's audit tasks (Task 6 especially) should be
+filed as a new issue against that epic, not silently folded into
+Stabilization's scope.
