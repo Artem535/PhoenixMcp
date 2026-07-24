@@ -79,6 +79,7 @@ int main() {
   spdlog::set_default_logger(std::make_shared<spdlog::logger>(
       "http", spdlog::sinks_init_list{file_sink}));
   spdlog::set_level(spdlog::level::debug);
+  spdlog::flush_on(spdlog::level::debug);
 
   phoenix_mcp::msg::types::ServerCapabilities capabilities{
       .tools =
