@@ -5,6 +5,7 @@ include(CMakeFindDependencyMacro)
 find_dependency(reflectcpp CONFIG)
 find_dependency(folly CONFIG)
 find_dependency(spdlog CONFIG)
+find_dependency(hfsm2 CONFIG)
 
 set_and_check(PHOENIX_MCP_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
 

@@ -31,12 +31,12 @@ int StdioTransport::run(Handler on_message) {
       continue;
     }
 
-    if (*response == "null") {
+    if (response->body == "null") {
       spdlog::error("StdioTransport| refusing to write 'null' to stdout");
       continue;
     }
 
-    std::cout << *response << '\n';
+    std::cout << response->body << '\n';
     std::cout.flush();
     line.clear();
   }

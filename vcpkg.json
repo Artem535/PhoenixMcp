@@ -6,7 +6,8 @@
   "dependencies": [
     "reflectcpp",
     "folly",
-    "spdlog"
+    "spdlog",
+    "hfsm2"
   ],
   "features": {
     "http-client": {

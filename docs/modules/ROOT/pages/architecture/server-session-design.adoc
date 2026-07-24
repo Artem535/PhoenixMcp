@@ -1,0 +1,410 @@
+# ServerSession State Machine Design
+
+**Issue**: #18 — Refactor ServerSession with proper state machine and transport contract
+
+## Problem
+
+Current `McpSession` has scattered state transitions across `handle_request_async`,
+`try_initialize`, and `handle_notification`. The `Stage` enum exists but transitions
+are not validated, guards are ad-hoc, and there is no formal contract for transport
+envelopes, cancellation, or shutdown.
+
+## Goals
+
+1. Formal state machine with defined transitions and guards
+2. Bounded transport envelopes (Request/Response)
+3. Per-request cancellation via `folly::CancellationSource`
+4. Graceful shutdown with bounded settle period
+5. Per-connection isolation via SessionManager
+
+## Non-goals
+
+- ClientSession (deferred to Client epic)
+- Host role (deferred)
+- HTTP/Streamable transport details (only envelope contract)
+
+---
+
+## State Machine
+
+### Library: HFSM2
+
+- **Package**: `hfsm2` in vcpkg
+- **Why**: Hierarchical FSM, header-only, MIT, zero allocation, no folly conflicts
+- **Alternative considered**: bext-sml2 (flat only, would require manual hierarchy emulation)
+
+### States
+
+Note: issue #18's acceptance criteria lists the lifecycle as
+`Uninitialized → Initialized → Operation → Shutdown`. This design
+intentionally uses a richer, renamed set of states — `Initializing`
+(mid-handshake, distinct from "done initializing"), `Stopping`/`Settled`
+(split so a caller can tell "shutdown requested" from "shutdown complete"),
+plus a `Failed` branch the issue's list didn't call out — because the
+coarser 4-state list doesn't distinguish "handshake in progress" from
+"handshake done" or "asked to stop" from "fully stopped". The transition
+table below is authoritative; treat the issue's list as the informal
+starting point it was refined from, not a literal naming requirement.
+
+```
+[*] → Uninitialized
+Uninitialized → Initializing     [guard: method == "initialize"]
+Initializing   → Operation       [guard: "notifications/initialized" received]
+Initializing   → Failed          [guard: timeout OR invalid method]
+Operation      → Stopping        [guard: close() called OR stdin EOF]
+Failed         → Stopping        [guard: close() called]
+Stopping       → Settled         [guard: pending ops drained OR settle timeout]
+Settled        → [*]
+```
+
+### State struct definitions (HFSM2 type-based states)
+
+```cpp
+// In include/phoenix_mcp/server/session_states.h
+
+namespace phoenix_mcp::server::states {
+
+struct Uninitialized {};
+struct Initializing {
+  std::chrono::steady_clock::time_point deadline;
+};
+struct Operation {};
+struct Failed {
+  std::string reason;
+};
+struct Stopping {
+  std::chrono::steady_clock::time_point settle_deadline;
+};
+struct Settled {};
+
+}  // namespace phoenix_mcp::server::states
+```
+
+### Transition table
+
+```cpp
+// In ServerSession::transition_table()
+using namespace hfsm2;
+using M = Machine<Config<>>;
+
+using S = M::PeerRoot<
+  states::Uninitialized,
+  states::Initializing,
+  states::Operation,
+  states::Failed,
+  states::Stopping,
+  states::Settled
+>;
+
+// Transitions defined via S::MemberList and guard/action functions
+```
+
+### Guards
+
+| From → To | Guard | Action |
+|---|---|---|
+| Uninitialized → Initializing | `request.method == "initialize"` | Store capabilities, set deadline |
+| Initializing → Operation | `notification.method == "notifications/initialized"` | Clear deadline |
+| Initializing → Failed | `now > deadline \|\| invalid_method` | Log error |
+| Operation → Stopping | `close_requested` | Start settle timer |
+| Failed → Stopping | `close_requested` | Start settle timer |
+| Stopping → Settled | `pending_ops == 0 \|\| now > settle_deadline` | Drain remaining ops |
+
+---
+
+## Transport Envelopes
+
+### RequestEnvelope (exists, extend)
+
+```cpp
+struct RequestEnvelope {
+  std::string body;
+  std::unordered_map<std::string, std::string> headers;
+  folly::CancellationToken cancel_token;  // NEW
+};
+```
+
+### ResponseEnvelope (new)
+
+```cpp
+struct ResponseEnvelope {
+  std::string body;
+  std::unordered_map<std::string, std::string> headers;
+  int status_code = 0;  // 0 = success, non-zero = error category
+};
+```
+
+### Handler signature change
+
+```cpp
+// Before
+using Handler = std::function<folly::coro::Task<std::optional<std::string>>(
+    RequestEnvelope)>;
+
+// After
+using Handler = std::function<folly::coro::Task<std::optional<ResponseEnvelope>>(
+    RequestEnvelope)>;
+```
+
+---
+
+## Cancellation
+
+### Per-request CancellationSource
+
+Each incoming request creates a `folly::CancellationSource`. The token is passed
+through `RequestEnvelope` to tool handlers. Remote cancellation
+(`notifications/cancelled`) triggers `CancellationSource::requestCancellation()`.
+
+```cpp
+class ServerSession {
+  // ...
+  folly::CancellationSource cancel_source_;
+};
+```
+
+### Cancellation flow
+
+1. Client sends `notifications/cancelled` with `requestId`
+2. Session looks up active request by ID
+3. Calls `cancel_source_.requestCancellation()`
+4. Tool handler checks `cancel_token.isCancellationRequested()` cooperatively
+5. Returns `McpError` with `ErrorCode::Cancelled`
+
+---
+
+## Graceful Shutdown
+
+### Settle period
+
+- Default: 5 seconds
+- Configurable via `ServerConfig::settle_timeout`
+- On shutdown: new requests rejected, in-flight requests get cancellation signal
+- After settle period: force-cancel remaining requests
+
+```cpp
+struct ServerConfig {
+  std::chrono::milliseconds init_timeout{5000};
+  std::chrono::milliseconds settle_timeout{5000};
+};
+```
+
+`idle_timeout`/`max_sessions` are NOT on `ServerConfig`: they're
+`SessionManager`-only policy (see below), not something `ServerSession`
+itself reads. Putting them on the same struct a `SessionFactory` closure
+independently uses to build each session would let the two drift — the
+manager's idea of `max_sessions` has nothing to do with how any individual
+session is constructed.
+
+### Shutdown sequence
+
+1. `close()` called (idempotent — second call is no-op)
+2. State → Stopping
+3. Reject new requests with a JSON-RPC error (already true since Phase 1/2:
+   `is_stopping() || is_settled()` in `handle_request_async`)
+4. Signal cancellation to all active requests (every `folly::CancellationSource`
+   still in `pending_cancellations_` — Phase 2's per-request map)
+5. Wait for pending ops to drain OR settle deadline (`close()` polls
+   `pending_operation_count_` against `Stopping::settle_deadline`)
+6. State → Settled
+7. Cleanup resources (nothing extra to release yet — `ToolRegistry` and
+   `folly::CancellationSource`s clean up via RAII)
+
+`close()` stays a synchronous, blocking call rather than a coroutine: it's
+never called from inside a coroutine today (only directly by tests and by
+`SessionManager`), and keeping it synchronous means "no pending ops" still
+returns immediately with no behavior change from Phase 1/2.
+
+`pending_operation_count_` (not `pending_cancellations_`) is what `close()`
+drains against. `pending_cancellations_` is populated only inside
+`call_tool_async`, well after `handle_request_async` has already released
+`fsm_mutex_` — draining against it alone left a real race: a request could
+pass the `is_operation()` admission check and then, before it reached
+`call_tool_async`, have `close()` observe an empty map and settle out from
+under it. `pending_operation_count_` is a plain `std::atomic<int>` bumped by
+a `PendingOperationGuard` constructed *inside* the same `fsm_mutex_` critical
+section as the admission check (see `handle_request_async`), so there is no
+window where a request is admitted but uncounted. It also covers every
+operation type (`ping`, `tools/list`, repeated `initialize`, `tools/call`),
+not just tool calls.
+
+---
+
+## SessionManager
+
+### Responsibilities
+
+- Create per-connection `ServerSession` instances
+- Enforce maximum concurrent sessions (`max_sessions`)
+- Expire idle sessions (`idle_timeout`, reset via `touch_session()`)
+- Deterministic cleanup on shutdown (`shutdown_all()`)
+
+```cpp
+class SessionManager {
+ public:
+  using SessionFactory = std::function<std::unique_ptr<ServerSession>()>;
+
+  explicit SessionManager(SessionFactory factory,
+                          std::chrono::milliseconds idle_timeout = {},
+                          size_t max_sessions = 0);
+
+  // Create session for new connection; nullptr if the id is already in use,
+  // max_sessions would be exceeded, or shutdown_all() already ran.
+  std::shared_ptr<ServerSession> create_session(const std::string& connection_id);
+
+  // Look up an existing session; nullptr if not found.
+  std::shared_ptr<ServerSession> get_session(const std::string& connection_id);
+
+  // Reset a session's idle timer.
+  void touch_session(const std::string& connection_id);
+
+  // Gracefully close and remove a session (e.g. on disconnect).
+  void remove_session(const std::string& connection_id);
+
+  // Gracefully close and remove any session idle past idle_timeout.
+  void expire_idle_sessions();
+
+  // Gracefully close every session and remove it from the manager.
+  folly::coro::Task<void> shutdown_all();
+
+ private:
+  SessionFactory factory_;
+  std::chrono::milliseconds idle_timeout_;
+  size_t max_sessions_;
+  mutable std::mutex mutex_;
+  std::unordered_map<std::string, /* session + last_active */> sessions_;
+  bool stopped_ = false;
+};
+```
+
+Construction takes a `SessionFactory` rather than the raw
+capabilities/instruction/`ToolRegistry` construction args `ServerSession`
+itself needs: those are usually identical across sessions of the same
+server, but `ToolRegistry` is owned per-session (`unique_ptr`), so something
+has to produce a fresh one per connection. The caller closes over whatever's
+shared; `SessionManager` only needs to know *when* to build a session, not
+how.
+
+Sessions are held as `std::shared_ptr`, not `unique_ptr`: `get_session()`/
+`create_session()` hand out a handle callers may still be using when another
+thread calls `remove_session()`/`expire_idle_sessions()`/`shutdown_all()`.
+With `unique_ptr` that would be a use-after-free once real concurrent
+transports are wired in; `shared_ptr` keeps the session alive until every
+handle (including the manager's own, briefly, while `close()` runs) is gone.
+
+`stopped_` is set under the same lock `shutdown_all()` snapshots `sessions_`
+under, so a `create_session()` racing a shutdown either inserts before that
+point (and gets closed) or observes `stopped_` and refuses to insert at all
+— no session can slip past both and be silently left running.
+
+Not wired into any transport yet — `McpRequestHandler` still owns a single,
+process-lifetime `ServerSession`. `SessionManager` is a tested, standalone
+building block for that; routing each connection through it is follow-up
+work, not part of this phase.
+
+---
+
+## Migration Plan
+
+### Phase 1: State machine (this PR)
+- [x] Add `hfsm2` to `vcpkg.json`
+- [x] Create `session_states.h` with state types
+- [x] Refactor `McpSession` → `ServerSession` with HFSM2
+- [x] Add transition guards and actions
+- [x] Update tests
+
+Note: HFSM2 transitions aren't table-driven — each state requests a
+transition itself by calling `control.changeTo<Target>()` from its own
+`react()`. `Stopping → Settled` currently fires immediately on `close()`
+(there is no in-flight-request tracking yet), so the real
+"drain pending ops or hit the settle deadline" behavior described below
+lands with Phase 3's `SessionManager` work.
+
+### Phase 2: Envelopes + cancellation
+- [x] Add `ResponseEnvelope` to `ITransport`
+- [x] Add `cancel_token` to `RequestEnvelope`
+- [x] Wire cancellation through tool handlers
+- [x] Update `StdioTransport` and HTTP transports
+
+Cancellation is tracked per-request, not per-session: `ServerSession` keeps a
+`std::map<RequestId, folly::CancellationSource>` guarded by a mutex, with a
+RAII `PendingRequestGuard` registering/erasing each entry around the
+in-flight `tools/call` handling. A `notifications/cancelled` for a given
+`requestId` looks up and fires that source; the transport-level
+`RequestEnvelope::cancel_token` is merged in via
+`folly::cancellation_token_merge` so either the client's explicit cancel
+notification or a transport-level disconnect (once a transport implements
+that) can stop an in-flight tool call. Once the merged token observes
+cancellation, the response is normalized to a JSON-RPC error (`-32800`,
+matching the LSP/JSON-RPC convention for "request cancelled") regardless of
+what the tool itself returned.
+
+`fsm_mutex_` guards only the state checks/transitions in
+`handle_request_async`, not the `co_await` into tool execution: holding it
+across that suspension would risk unlocking a `std::mutex` from a different
+thread than the one that locked it (tool execution can hop onto the
+CPU/IO executor) and would serialize every other request behind whichever
+tool call happens to be in flight. Verified with concurrent tests
+(`NotificationsCancelledStopsInFlightTool`,
+`ConcurrentPingIsNotBlockedByInFlightToolCall`) and a live end-to-end run of
+the Drogon HTTP transport showing genuinely parallel tool calls.
+
+### Phase 3: Shutdown + SessionManager
+- [x] Implement `ServerConfig` (`init_timeout`/`settle_timeout` already
+      existed from Phase 1; idle/session-limit policy lives on
+      `SessionManager` instead, not added to `ServerConfig` — see below)
+- [x] Implement `SessionManager`
+- [x] Implement graceful shutdown sequence
+- [x] Add settle period tests
+
+`ServerSession::close()` now does real draining instead of settling
+immediately: it requests cancellation on every entry in
+`pending_cancellations_`, then blocks (polling every 5ms) until
+`pending_operation_count_` reaches zero or `Stopping::settle_deadline`
+passes, whichever comes first — only then does it react `SettleComplete{}`.
+Verified with `CloseWaitsForInFlightToolToDrainThenSettles` (a cooperative
+tool drains well under a generous settle timeout) and
+`CloseForceSettlesAfterSettleTimeoutElapses` (a tool that ignores
+cancellation doesn't stop `close()` from force-settling once the deadline
+passes). See "Shutdown sequence" above for why draining is counted via
+`pending_operation_count_` rather than `pending_cancellations_.size()` — the
+latter alone had a real admitted-but-uncounted race, caught in code review
+before this phase was committed.
+
+`SessionManager` is implemented and unit-tested in isolation
+(`session_manager_test.cc`) but not yet wired into `McpRequestHandler` or any
+transport — see the note under "SessionManager" above.
+
+---
+
+## File Layout
+
+```
+include/phoenix_mcp/server/
+  server_session.h           # ServerSession + ServerConfig
+  session_states.h           # HFSM2 state definitions
+  session_manager.h          # SessionManager
+
+src/phoenix_mcp/server/
+  server_session.cpp         # Implementation
+  session_states.cpp         # Implementation
+  session_manager.cpp        # Implementation
+
+include/phoenix_mcp/transport/
+  i_transport.h              # ResponseEnvelope + cancel_token
+
+tests/phoenix_mcp/server/
+  server_session_test.cc     # State machine + cancellation + shutdown tests
+  session_manager_test.cc    # SessionManager tests
+```
+
+## Open Questions
+
+1. Should `ServerSession` own the `ToolRegistry` or should it be injected?
+   → Current: owned. Keep for now, revisit when Host role is implemented.
+
+2. Should state machine be thread-safe?
+   → Yes, guard with mutex on `process_event()`. HFSM2 itself is not thread-safe.
+
+3. How to handle `notifications/initialized` in the state machine?
+   → As an event that triggers Initializing → Operation transition.
