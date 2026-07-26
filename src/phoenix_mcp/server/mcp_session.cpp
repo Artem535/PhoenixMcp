@@ -158,7 +158,7 @@ folly::coro::Task<rfl::Generic> McpSession::handle_operation_async(
 
   spdlog::error("McpSession| Method not found: {}", request.method);
   co_return create_error("Method not found: " + request.method, request.id,
-                         constants::msg_error::Invalid_request);
+                         constants::msg_error::Method_not_found);
 }
 
 rfl::Generic McpSession::create_error(const std::string& msg,

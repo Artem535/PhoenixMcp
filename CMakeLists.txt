@@ -211,9 +211,15 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_tool_registry_test
     PRIVATE PhoenixMcp::Server GTest::gtest_main)
 
+  add_executable(phoenix_mcp_request_handler_test
+    tests/phoenix_mcp/server/mcp_request_handler_test.cc)
+  target_link_libraries(phoenix_mcp_request_handler_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
   gtest_discover_tests(phoenix_mcp_error_test)
   gtest_discover_tests(phoenix_mcp_tool_registry_test)
+  gtest_discover_tests(phoenix_mcp_request_handler_test)
 
   add_test(
     NAME phoenix_mcp_public_headers
