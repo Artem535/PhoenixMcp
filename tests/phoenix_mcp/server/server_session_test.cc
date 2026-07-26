@@ -18,8 +18,8 @@ namespace {
 std::unique_ptr<ServerSession> make_session(
     ServerConfig config = {},
     std::unique_ptr<phoenix_mcp::tool::ToolRegistry> tool_registry = nullptr) {
-  ServerCapabilities capabilities{
-      .tools = ToolsCapabilities{.list_changed = false}};
+  ServerCapabilities capabilities{.tools =
+                                      ToolsCapabilities{.list_changed = false}};
   Implementation info{.name = "test", .version = "0.0.0"};
   if (!tool_registry) {
     tool_registry = std::make_unique<phoenix_mcp::tool::ToolRegistry>();
@@ -50,8 +50,8 @@ TEST(ServerSessionTest, StartsUninitialized) {
 
 TEST(ServerSessionTest, RejectsNonInitializeRequestWhileUninitialized) {
   const auto session = make_session();
-  const auto response = session->handle_input(
-      R"({"jsonrpc":"2.0","method":"ping","id":1})");
+  const auto response =
+      session->handle_input(R"({"jsonrpc":"2.0","method":"ping","id":1})");
   ASSERT_TRUE(response.has_value());
   EXPECT_EQ(session->state_name(), "Uninitialized");
 }
@@ -67,8 +67,8 @@ TEST(ServerSessionTest, InitializeRequestMovesToInitializing) {
 TEST(ServerSessionTest, RejectsRequestsWhileInitializing) {
   const auto session = make_session();
   session->handle_input(kInitializeRequest);
-  const auto response = session->handle_input(
-      R"({"jsonrpc":"2.0","method":"ping","id":2})");
+  const auto response =
+      session->handle_input(R"({"jsonrpc":"2.0","method":"ping","id":2})");
   ASSERT_TRUE(response.has_value());
   EXPECT_EQ(session->state_name(), "Initializing");
 }
@@ -222,6 +222,58 @@ TEST(ServerSessionTest, NotificationsCancelledStopsInFlightTool) {
   EXPECT_NE(response_json.find("cancelled"), std::string::npos);
 }
 
+TEST(ServerSessionTest, TransportCancellationStopsInFlightTool) {
+  std::atomic<bool> tool_started{false};
+  std::atomic<bool> tool_saw_cancellation{false};
+
+  auto registry = std::make_unique<phoenix_mcp::tool::ToolRegistry>();
+  registry->register_cancellable_tool<WaitToolInput>(
+      "wait_tool", "Waits until cancelled or polling runs out",
+      [&](const WaitToolInput& input, const folly::CancellationToken& token)
+          -> folly::coro::Task<CallToolResult> {
+        tool_started = true;
+        for (int i = 0; i < input.poll_iterations; ++i) {
+          if (token.isCancellationRequested()) {
+            tool_saw_cancellation = true;
+            co_return CallToolResult{
+                .content = {TextContent{.text = "cancelled"}},
+                .is_error = true};
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        co_return CallToolResult{.content = {TextContent{.text = "timed out"}},
+                                 .is_error = true};
+      });
+
+  const auto session = make_session({}, std::move(registry));
+  initialize(*session);
+
+  folly::CancellationSource transport_source;
+  std::optional<rfl::Generic> call_result;
+  std::thread worker([&] {
+    call_result = session->handle_input(
+        R"({"jsonrpc":"2.0","method":"tools/call","id":43,)"
+        R"("params":{"name":"wait_tool","arguments":{"poll_iterations":200}}})",
+        transport_source.getToken());
+  });
+
+  for (int i = 0; i < 200 && !tool_started; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  if (!tool_started) {
+    worker.join();
+    FAIL() << "tool never started polling";
+  }
+
+  transport_source.requestCancellation();
+  worker.join();
+
+  EXPECT_TRUE(tool_saw_cancellation);
+  ASSERT_TRUE(call_result.has_value());
+  const auto response_json = rfl::json::write(*call_result);
+  EXPECT_NE(response_json.find("cancelled"), std::string::npos);
+}
+
 TEST(ServerSessionTest, ConcurrentPingIsNotBlockedByInFlightToolCall) {
   std::atomic<bool> tool_started{false};
   std::atomic<bool> release_tool{false};
@@ -343,7 +395,8 @@ TEST(ServerSessionTest, RejectsMalformedJsonWithCodecErrorCode) {
   EXPECT_NE(response_json.find("-32700"), std::string::npos) << response_json;
 }
 
-TEST(ServerSessionTest, InitializeWithUnsupportedProtocolVersionFailsInitialization) {
+TEST(ServerSessionTest,
+     InitializeWithUnsupportedProtocolVersionFailsInitialization) {
   const auto session = make_session();
   const auto response = session->handle_input(
       R"({"jsonrpc":"2.0","method":"initialize","id":1,)"
