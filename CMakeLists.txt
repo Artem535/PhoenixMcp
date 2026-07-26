@@ -272,6 +272,17 @@ if(BUILD_TESTING)
       -DPHOENIX_MCP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests/verify_manual_authority.cmake)
 
+  if(UNIX AND TARGET create_server_http)
+    find_program(PHOENIX_MCP_BASH_EXECUTABLE bash REQUIRED)
+    add_test(
+      NAME phoenix_mcp_http_example
+      COMMAND ${PHOENIX_MCP_BASH_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/phoenix_mcp/integration/run_http_example_test.sh
+        $<TARGET_FILE:create_server_http>
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/create_server_http/smoke_test.sh)
+    set_tests_properties(phoenix_mcp_http_example PROPERTIES LABELS integration)
+  endif()
+
   add_test(
     NAME phoenix_mcp_package_consumer
     COMMAND ${CMAKE_COMMAND}
