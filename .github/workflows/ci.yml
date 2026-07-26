@@ -77,25 +77,17 @@ jobs:
         if: matrix.run_tests
         run: ctest --preset ${{ matrix.preset }} --output-on-failure --timeout 60
 
-  # Informational only, not a required check: xmake's vcpkg package manager
-  # cannot currently resolve add_requires("vcpkg::...") in a repo that has
-  # its own vcpkg.json, in either of its install modes (upstream bug,
-  # https://github.com/xmake-io/xmake/issues/7665). Re-enable as a required
-  # check once that's fixed upstream.
+  # Xmake is a supported secondary frontend. Use the dev branch because it
+  # contains the vcpkg manifest resolution fix required by this project.
   xmake-linux:
     runs-on: ubuntu-latest
     continue-on-error: true
-    # Known to hang (not just fail) on the upstream bug above rather than
-    # exiting promptly; without a bound here a stuck run parks a runner slot
-    # indefinitely instead of freeing it up for other jobs.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Xmake
-        uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: latest
+      - name: Setup Xmake dev
+        run: curl -fsSL https://xmake.io/shget.text | bash -s dev
 
       - name: Setup vcpkg
         run: |
