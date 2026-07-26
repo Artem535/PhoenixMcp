@@ -1,6 +1,7 @@
 #include "phoenix_mcp/server/server_session.h"
 
 #include <chrono>
+#include <memory>
 #include <thread>
 #include <utility>
 
@@ -23,13 +24,32 @@ class PendingRequestGuard {
   PendingRequestGuard(
       std::mutex& mutex,
       std::map<msg::types::RequestId, folly::CancellationSource>& pending,
-      msg::types::RequestId id)
-      : mutex_(mutex), pending_(pending), id_(std::move(id)) {
+      msg::types::RequestId id, folly::CancellationToken transport_token)
+      : mutex_(mutex),
+        pending_(pending),
+        id_(std::move(id)),
+        source_(std::make_shared<folly::CancellationSource>()) {
     std::lock_guard lock(mutex_);
-    pending_[id_] = source_;
+    pending_[id_] = *source_;
+    transport_callback_mutex_ = std::make_shared<std::mutex>();
+    transport_callback_ = std::make_unique<folly::CancellationCallback>(
+        std::move(transport_token),
+        [source = source_, callback_mutex = transport_callback_mutex_] {
+          std::lock_guard lock(*callback_mutex);
+          source->requestCancellation();
+        });
   }
 
   ~PendingRequestGuard() {
+    // Folly deregisters a callback before its destructor returns, but the
+    // callback may already be executing on the transport thread. Serialize
+    // callback completion and destruction explicitly so the source and its
+    // callback closure cannot be observed concurrently during request teardown.
+    {
+      std::lock_guard lock(*transport_callback_mutex_);
+      transport_callback_.reset();
+    }
+
     std::lock_guard lock(mutex_);
     // Only erase our own entry: if a client reuses a request id while the
     // first request is still in flight, a second guard may have since
@@ -46,13 +66,15 @@ class PendingRequestGuard {
   PendingRequestGuard(const PendingRequestGuard&) = delete;
   PendingRequestGuard& operator=(const PendingRequestGuard&) = delete;
 
-  folly::CancellationToken token() const { return source_.getToken(); }
+  folly::CancellationToken token() const { return source_->getToken(); }
 
  private:
   std::mutex& mutex_;
   std::map<msg::types::RequestId, folly::CancellationSource>& pending_;
   msg::types::RequestId id_;
-  folly::CancellationSource source_;
+  std::shared_ptr<folly::CancellationSource> source_;
+  std::shared_ptr<std::mutex> transport_callback_mutex_;
+  std::unique_ptr<folly::CancellationCallback> transport_callback_;
 };
 
 // RAII bump of the "operation in flight" counter close() drains against.
@@ -337,17 +359,15 @@ folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
                 rfl::json::write(arguments));
 
   const PendingRequestGuard guard(cancellations_mutex_, pending_cancellations_,
-                                  id);
-  const auto merged_token =
-      folly::cancellation_token_merge(cancel_token, guard.token());
+                                  id, std::move(cancel_token));
 
   try {
     const auto result = co_await tool_registry_->call_tool_async(
-        name, arguments.value(), merged_token);
+        name, arguments.value(), guard.token());
     // A tool may return normally after observing cancellation (or ignore the
     // token entirely); surface cancellation uniformly here rather than
     // trusting each tool to encode it in its own result.
-    if (merged_token.isCancellationRequested()) {
+    if (guard.token().isCancellationRequested()) {
       co_return create_error("Request was cancelled", id,
                              cnt_error::Code::Request_cancelled);
     }
