@@ -108,6 +108,14 @@ jobs:
           restore-keys: |
             xmake-
 
+      - name: Prime Xmake repository
+        run: |
+          if [ ! -d "$HOME/.xmake/repositories/xmake-repo/.git" ]; then
+            mkdir -p "$HOME/.xmake/repositories"
+            timeout 120 git clone --depth=1 https://github.com/xmake-io/xmake-repo.git \
+              "$HOME/.xmake/repositories/xmake-repo"
+          fi
+
       - name: Configure
         run: xmake f -m debug -y
 
