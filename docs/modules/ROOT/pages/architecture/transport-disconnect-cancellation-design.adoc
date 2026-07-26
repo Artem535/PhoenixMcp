@@ -1,0 +1,65 @@
+= Transport disconnect cancellation design
+:toc:
+
+== Scope
+
+Issue #28 makes transport disconnects cancel active server requests.  The
+implementation covers the primary stdio and Drogon transports, and verifies
+that `ServerSession` merges this cancellation with
+`notifications/cancelled`.  It does not add a new public API.
+
+== Data flow
+
+[source,text]
+----
+stdio EOF/POLLHUP or Drogon TCP close
+  -> transport-owned folly::CancellationSource
+  -> ITransport::RequestEnvelope::cancel_token
+  -> ServerSession merged cancellation token
+  -> cancellable tool handler
+----
+
+Each transport owns the source for the lifetime of the underlying connection.
+It passes only its token in the request envelope. `ServerSession` remains the
+single place that merges the transport token with the per-request protocol
+cancellation source, so a handler has one cooperative cancellation token.
+
+== Transport behavior
+
+=== Stdio
+
+`StdioTransport` watches its input file descriptor for `POLLHUP` and
+`POLLERR` while request handling is in progress. A hangup requests
+cancellation; normal EOF terminates the transport cleanly. The watcher stops
+and joins before `run()` returns.
+
+=== Drogon
+
+`DrogonTransport` creates one cancellation source per TCP connection, keyed
+by the existing stable connection identity. On the first request it chains a
+connection close callback, requests cancellation, and removes the source.
+The callback must preserve any existing callback and must not retain the
+transport after it is destroyed.
+
+=== Crow
+
+Crow remains an optional compatibility adapter. Its public `SimpleApp` route
+API exposes neither a connection handle nor a close callback, so it cannot
+reliably report transport disconnects. This release documents Crow as
+deferred instead of manufacturing a token cancellation from an unrelated
+request event. A lower-level Crow integration is a separate future task.
+
+== Tests and bounds
+
+Tests first prove that a long-running, cooperative tool observes cancellation
+within a bounded wait after a simulated stdio hangup or a dropped Drogon
+connection. Server-session tests cover both transport cancellation and the
+existing protocol cancellation notification. Tests must avoid unbounded joins:
+they release or cancel every worker on every assertion path.
+
+== Failure handling
+
+Disconnect is not a JSON-RPC protocol error. It cancels work and suppresses a
+response when delivery is impossible. Cancellation sources are removed on
+connection close, and no callback is invoked after its owning transport is
+gone.

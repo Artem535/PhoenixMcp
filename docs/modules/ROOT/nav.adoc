@@ -4,6 +4,7 @@
 ** xref:architecture/code-style.adoc[Code style]
 ** xref:architecture/build-systems.adoc[Build systems]
 ** xref:architecture/server-session-design.adoc[ServerSession state machine]
+** xref:architecture/transport-disconnect-cancellation-design.adoc[Transport disconnect cancellation]
 ** Epic implementation plans
 *** xref:architecture/epic-0-1-implementation-plan.adoc[Epic 0-1: Foundation]
 *** xref:architecture/epic-2-protocol-server-implementation-plan.adoc[Epic 2: Protocol and server]
