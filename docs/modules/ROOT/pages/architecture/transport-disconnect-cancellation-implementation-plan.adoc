@@ -1,0 +1,272 @@
+= Transport disconnect cancellation implementation plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
+> checkbox syntax for tracking.
+
+**Goal:** Make a disconnect from the stdio or Drogon transport cooperatively
+cancel the active MCP tool request.
+
+**Architecture:** Each connection owns a `folly::CancellationSource`; the
+transport puts its token in `ITransport::RequestEnvelope`. `ServerSession`
+already merges that token with its request-local cancellation source. Stdio
+uses a bounded POSIX poll watcher. Drogon chains its TCP close callback and
+cleans up the associated source. Crow is documented as deferred.
+
+**Tech stack:** C++20, Folly cancellation/coroutines, GoogleTest, CTest,
+Drogon, POSIX `poll` for the Unix stdio implementation.
+
+== Global constraints
+
+* CMake is handwritten and authoritative; do not generate it from Xmake.
+* Run every repository command through `rtk`.
+* Use `.h` and `.cc`/`.cpp` consistently with the existing file, two-space
+  formatting, public namespace `phoenix_mcp` and `snake_case` functions.
+* Do not expose concrete Drogon or Crow types through public SDK APIs.
+* All waits in tests are bounded and every worker is joined on every path.
+* The new stdio disconnect watcher is Unix-only; Windows keeps the existing
+  clean-EOF shutdown behavior until a native handle watcher is designed.
+
+---
+
+== File structure
+
+`include/phoenix_mcp/transport/stdio_transport.h` gains an fd-injecting
+constructor for deterministic pipe tests. `src/phoenix_mcp/transport/stdio_transport.cpp`
+implements the Unix watcher. `tests/phoenix_mcp/transport/stdio_transport_test.cc`
+owns the pipe-level behavioral test. `drogon_transport.h/.cpp` own only
+connection-to-cancellation mapping. The private
+`src/phoenix_mcp/transport/drogon_cancellation_state.h/.cpp` owns the
+thread-safe, framework-free source map and has a focused unit test.
+`server_session_test.cc` remains the proof that the merged token reaches a
+tool handler.
+
+=== Task 1: Establish server-session cancellation behavior
+
+**Files:**
+
+* Modify: `tests/phoenix_mcp/server/server_session_test.cc`
+* Modify: `CMakeLists.txt`
+
+**Consumes:** `ServerSession::handle_input(std::string,
+folly::CancellationToken)`.
+
+**Produces:** A regression test proving a transport token cancels a running
+tool and returns the protocol cancellation result.
+
+- [ ] **Step 1: Add the failing test.** Register a cancellable `wait_tool`,
+  run `tools/call` on a worker, then cancel the source supplied as the second
+  `handle_input` argument.
+
+[source,cpp]
+----
+folly::CancellationSource transport_source;
+std::thread worker([&] {
+  call_result = session->handle_input(kCallWaitTool,
+                                      transport_source.getToken());
+});
+ASSERT_TRUE(wait_until(tool_started, std::chrono::milliseconds(1000)));
+transport_source.requestCancellation();
+worker.join();
+EXPECT_TRUE(tool_saw_cancellation);
+EXPECT_THAT(rfl::json::write(*call_result), HasSubstr("cancelled"));
+----
+
+- [ ] **Step 2: Run the single test and record its result.**
+
+[source,bash]
+----
+rtk run 'cmake --build --preset linux-all-features --target phoenix_mcp_server_session_test && ctest --test-dir build/linux-all-features -R ServerSessionTest.TransportCancellationStopsInFlightTool --output-on-failure'
+----
+
+- [ ] **Step 3: Keep the existing `folly::cancellation_token_merge` path or
+  make the minimal correction necessary for the test to pass.** Do not add
+  transport behavior in `ServerSession`.
+
+[source,cpp]
+----
+const auto merged_token =
+    folly::cancellation_token_merge(cancel_token, guard.token());
+co_await tool_registry_->call_tool_async(name, arguments.value(),
+                                         merged_token);
+----
+
+- [ ] **Step 4: Re-run the single test; it passes without an unbounded wait.**
+
+- [ ] **Step 5: Commit the test and any minimal session correction.**
+
+[source,bash]
+----
+rtk run 'git add tests/phoenix_mcp/server/server_session_test.cc src/phoenix_mcp/server/server_session.cpp CMakeLists.txt && git commit -m "test: cover transport cancellation in server session"'
+----
+
+=== Task 2: Cancel an active stdio request on pipe hangup
+
+**Files:**
+
+* Modify: `include/phoenix_mcp/transport/stdio_transport.h`
+* Modify: `src/phoenix_mcp/transport/stdio_transport.cpp`
+* Create: `tests/phoenix_mcp/transport/stdio_transport_test.cc`
+* Modify: `CMakeLists.txt`
+
+**Consumes:** `ITransport::Handler` and `RequestEnvelope::cancel_token`.
+
+**Produces:** `StdioTransport(int input_fd, int output_fd)` for test-only
+channel injection and Unix cancellation on `POLLHUP` or `POLLERR`.
+
+- [ ] **Step 1: Write the failing pipe test.** Create input and output pipes,
+  pass their read/write ends to `StdioTransport`, write one JSON-RPC line,
+  wait for the handler to start, close the input writer, and assert the
+  handler sees cancellation within one second.
+
+[source,cpp]
+----
+StdioTransport transport(input_read, output_write);
+std::thread runner([&] { transport.run(handler); });
+write_all(input_write, "{\\\"jsonrpc\\\":\\\"2.0\\\"}\\n");
+ASSERT_TRUE(wait_until(handler_started, 1000ms));
+close(input_write);
+EXPECT_TRUE(wait_until(handler_cancelled, 1000ms));
+runner.join();
+----
+
+- [ ] **Step 2: Run it and verify it fails because the envelope has the
+  default non-cancelling token.**
+
+[source,bash]
+----
+rtk run 'cmake --build --preset linux-all-features --target phoenix_mcp_stdio_transport_test && ctest --test-dir build/linux-all-features -R StdioTransportTest.CancelsActiveRequestWhenInputPipeCloses --output-on-failure'
+----
+
+- [ ] **Step 3: Implement the smallest Unix watcher.** Add the fd constructor;
+  create one `folly::CancellationSource` in `run`; start a watcher that polls
+  input for `POLLHUP | POLLERR` every 100ms; pass `source.getToken()` in every
+  envelope; request cancellation on hangup; set a stop flag and join the
+  watcher before returning. Preserve the default constructor by delegating to
+  standard input/output descriptors.
+
+[source,cpp]
+----
+while (!stop.load(std::memory_order_relaxed)) {
+  pollfd pfd{input_fd, POLLIN, 0};
+  if (::poll(&pfd, 1, 100) > 0 &&
+      (pfd.revents & (POLLHUP | POLLERR))) {
+    source.requestCancellation();
+    return;
+  }
+}
+----
+
+- [ ] **Step 4: Re-run the focused test, then the complete stdio transport
+  target.**
+
+[source,bash]
+----
+rtk run 'ctest --test-dir build/linux-all-features -R StdioTransportTest --output-on-failure'
+----
+
+- [ ] **Step 5: Commit the tested stdio behavior.**
+
+[source,bash]
+----
+rtk run 'git add include/phoenix_mcp/transport/stdio_transport.h src/phoenix_mcp/transport/stdio_transport.cpp tests/phoenix_mcp/transport/stdio_transport_test.cc CMakeLists.txt && git commit -m "feat: cancel stdio requests on disconnect"'
+----
+
+=== Task 3: Map a Drogon connection close to cancellation
+
+**Files:**
+
+* Modify: `include/phoenix_mcp/transport/drogon_transport.h`
+* Modify: `src/phoenix_mcp/transport/drogon_transport.cpp`
+* Create: `src/phoenix_mcp/transport/drogon_cancellation_state.h`
+* Create: `src/phoenix_mcp/transport/drogon_cancellation_state.cpp`
+* Create: `tests/phoenix_mcp/transport/drogon_transport_test.cc`
+* Modify: `CMakeLists.txt`
+
+**Consumes:** Drogon's `trantor::TcpConnection` close callback and
+`ITransport::RequestEnvelope`.
+
+**Produces:** One source per stable Drogon connection identity; its token is
+attached to every request and cancelled exactly once when that connection
+closes.
+
+- [ ] **Step 1: Write a failing focused mapping test.** Extract a framework-
+independent private `DrogonCancellationState` helper that stores a source by
+`std::string connection_id`, returns its token, and closes a connection. Add
+the private source directory to the test target only. Assert that closing
+`alpha` cancels alpha's token, erases alpha, and leaves beta uncancelled.
+
+[source,cpp]
+----
+auto alpha = sources.token_for("alpha");
+auto beta = sources.token_for("beta");
+sources.close("alpha");
+EXPECT_TRUE(alpha.isCancellationRequested());
+EXPECT_FALSE(beta.isCancellationRequested());
+EXPECT_FALSE(sources.contains("alpha"));
+----
+
+- [ ] **Step 2: Run it and verify it fails because the helper does not exist.**
+
+- [ ] **Step 3: Implement the helper and wire it in `run`.**
+  `DrogonCancellationState` is implemented in its own private
+  translation unit. On first request, retrieve/create the connection source,
+  chain (never replace) the existing close callback, then close the matching
+  source. Add the returned token to `request.cancel_token`. The callback
+  captures only transport-owned shared state, not `this`, so a close after
+  `DrogonTransport` destruction cannot dereference it.
+
+[source,cpp]
+----
+auto state = cancel_state_;
+conn->setCloseCallback([state, connection_id, previous](auto&& connection) {
+  if (previous) previous(connection);
+  state->close(connection_id);
+});
+request.cancel_token = state->token_for(request.connection_id);
+----
+
+- [ ] **Step 4: Re-run the focused test and the existing HTTP integration
+  CTest.**
+
+[source,bash]
+----
+rtk run 'ctest --test-dir build/linux-all-features -R "(DrogonTransportTest|phoenix_mcp_http_example)" --output-on-failure'
+----
+
+- [ ] **Step 5: Commit the Drogon mapping.**
+
+[source,bash]
+----
+rtk run 'git add include/phoenix_mcp/transport/drogon_transport.h src/phoenix_mcp/transport/drogon_transport.cpp tests/phoenix_mcp/transport/drogon_transport_test.cc CMakeLists.txt && git commit -m "feat: cancel Drogon requests on disconnect"'
+----
+
+=== Task 4: Document Crow and verify the complete change
+
+**Files:**
+
+* Modify: `docs/modules/ROOT/pages/architecture/index.adoc`
+* Modify: `docs/modules/ROOT/pages/architecture/epic-2-protocol-server-implementation-plan.adoc`
+
+**Consumes:** The tested stdio and Drogon behaviors.
+
+**Produces:** An explicit compatibility statement: Crow does not supply
+disconnect cancellation through its current public route API.
+
+- [ ] **Step 1: Add the Crow limitation and completed behavior to the
+architecture pages.** State that Crow must not claim disconnect cancellation
+until it has a lower-level connection lifecycle integration.
+
+- [ ] **Step 2: Run formatting and the full CMake verification.**
+
+[source,bash]
+----
+rtk run 'clang-format -i include/phoenix_mcp/transport/stdio_transport.h src/phoenix_mcp/transport/stdio_transport.cpp include/phoenix_mcp/transport/drogon_transport.h src/phoenix_mcp/transport/drogon_transport.cpp tests/phoenix_mcp/transport/stdio_transport_test.cc tests/phoenix_mcp/transport/drogon_transport_test.cc && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --preset linux-all-features && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-all-features && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-all-features --output-on-failure && git diff --check'
+----
+
+- [ ] **Step 3: Commit documentation and verification-ready changes.**
+
+[source,bash]
+----
+rtk run 'git add docs/modules/ROOT/pages/architecture/index.adoc docs/modules/ROOT/pages/architecture/epic-2-protocol-server-implementation-plan.adoc && git commit -m "docs: record Crow disconnect limitation"'
+----
