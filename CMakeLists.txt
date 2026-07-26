@@ -231,6 +231,14 @@ if(BUILD_TESTING)
       -DPHOENIX_MCP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests/verify_manual_authority.cmake)
 
+  if(TARGET create_server)
+    add_test(
+      NAME phoenix_mcp_stdio_example
+      COMMAND ${CMAKE_COMMAND}
+        -DSERVER_EXECUTABLE=$<TARGET_FILE:create_server>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/phoenix_mcp/integration/run_stdio_example_test.cmake)
+  endif()
+
   add_test(
     NAME phoenix_mcp_package_consumer
     COMMAND ${CMAKE_COMMAND}
