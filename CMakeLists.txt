@@ -9,6 +9,8 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" PHOENIX_MCP_VERSION)
 string(STRIP "${PHOENIX_MCP_VERSION}" PHOENIX_MCP_VERSION)
 project(PhoenixMcp VERSION "${PHOENIX_MCP_VERSION}" LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -151,8 +153,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Install / export
 # ---------------------------------------------------------------------------
-include(GNUInstallDirs)
-
 install(DIRECTORY include/phoenix_mcp
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
   FILES_MATCHING PATTERN "*.h")
