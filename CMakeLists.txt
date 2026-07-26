@@ -254,6 +254,11 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_mcp_request_handler_test
     PRIVATE PhoenixMcp::Server GTest::gtest_main)
 
+  add_executable(phoenix_mcp_tool_registry_test
+    tests/phoenix_mcp/server/tool_registry_test.cc)
+  target_link_libraries(phoenix_mcp_tool_registry_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
   gtest_discover_tests(phoenix_mcp_json_rpc_codec_test)
   gtest_discover_tests(phoenix_mcp_dialect_test)
@@ -261,6 +266,7 @@ if(BUILD_TESTING)
   gtest_discover_tests(phoenix_mcp_server_session_test)
   gtest_discover_tests(phoenix_mcp_session_manager_test)
   gtest_discover_tests(phoenix_mcp_mcp_request_handler_test)
+  gtest_discover_tests(phoenix_mcp_tool_registry_test)
 
   add_test(
     NAME phoenix_mcp_public_headers
@@ -271,6 +277,15 @@ if(BUILD_TESTING)
     COMMAND ${CMAKE_COMMAND}
       -DPHOENIX_MCP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests/verify_manual_authority.cmake)
+
+  if(TARGET create_server)
+    add_test(
+      NAME phoenix_mcp_stdio_example
+      COMMAND ${CMAKE_COMMAND}
+        -DSERVER_EXECUTABLE=$<TARGET_FILE:create_server>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/phoenix_mcp/integration/run_stdio_example_test.cmake)
+    set_tests_properties(phoenix_mcp_stdio_example PROPERTIES LABELS integration)
+  endif()
 
   add_test(
     NAME phoenix_mcp_package_consumer
