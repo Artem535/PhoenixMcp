@@ -210,7 +210,13 @@ EXPECT_FALSE(sources.contains("alpha"));
 
 - [ ] **Step 3: Implement the helper and wire it in `run`.**
   `DrogonCancellationState` is implemented in its own private
-  translation unit. On first request, retrieve/create the connection source,
+  translation unit under `phoenix_mcp::server::drogon_internal` and is held
+  by `DrogonTransport` through a forward-declared `std::shared_ptr`; it must
+  not appear in a public method signature. Add its `.cpp` to
+  `phoenix_mcp_sources` inside `if(PHOENIX_MCP_ENABLE_DROGON)`. Add the
+  GoogleTest executable only in the same conditional block, link it to
+  `PhoenixMcp::TransportDrogon`, and give that test target the private
+  `src/phoenix_mcp/transport` include directory. On first request, retrieve/create the connection source,
   chain (never replace) the existing close callback, then close the matching
   source. Add the returned token to `request.cancel_token`. The callback
   captures only transport-owned shared state, not `this`, so a close after
@@ -238,7 +244,7 @@ rtk run 'ctest --test-dir build/linux-all-features -R "(DrogonTransportTest|phoe
 
 [source,bash]
 ----
-rtk run 'git add include/phoenix_mcp/transport/drogon_transport.h src/phoenix_mcp/transport/drogon_transport.cpp tests/phoenix_mcp/transport/drogon_transport_test.cc CMakeLists.txt && git commit -m "feat: cancel Drogon requests on disconnect"'
+rtk run 'git add include/phoenix_mcp/transport/drogon_transport.h src/phoenix_mcp/transport/drogon_transport.cpp src/phoenix_mcp/transport/drogon_cancellation_state.h src/phoenix_mcp/transport/drogon_cancellation_state.cpp tests/phoenix_mcp/transport/drogon_transport_test.cc CMakeLists.txt && git commit -m "feat: cancel Drogon requests on disconnect"'
 ----
 
 === Task 4: Document Crow and verify the complete change
