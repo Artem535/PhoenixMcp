@@ -11,6 +11,10 @@
 
 namespace phoenix_mcp::server {
 
+namespace drogon_internal {
+class DrogonCancellationState;
+}
+
 class DrogonTransport final : public ITransport {
  public:
   struct Config {
@@ -31,6 +35,7 @@ class DrogonTransport final : public ITransport {
  private:
   Config cfg_;
   std::shared_ptr<runtime::Runtime> runtime_;
+  std::shared_ptr<drogon_internal::DrogonCancellationState> cancellation_state_;
 };
 
 }  // namespace phoenix_mcp::server
