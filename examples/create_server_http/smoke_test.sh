@@ -23,12 +23,9 @@ echo "elapsed_ms: ${health_elapsed_ms}"
 cat "${TMP_DIR}/health"
 echo
 
-# Every request past this point must reuse the same TCP connection: since
-# #27, each connection gets its own ServerSession, so a fresh connection per
-# request (what separate `curl` invocations would do) would see an
-# uninitialized session on every call after the first. `curl --next` chains
-# multiple requests in one invocation, reusing the connection to the same
-# host across them, the same way a real long-lived MCP client would.
+# Streamable HTTP makes the session explicit. The initialize response issues
+# `Mcp-Session-Id`; every later request sends it, so the client may reconnect
+# or use a different TCP connection without losing its MCP lifecycle state.
 declare -a labels=(
   "initialize"
   "notifications/initialized"
@@ -44,18 +41,23 @@ declare -a payloads=(
   '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"delayed_sum_struct_tool","arguments":{"a":2,"b":3,"delay_ms":1000}}}'
 )
 
-curl_args=()
-for i in "${!payloads[@]}"; do
-  if [ "${i}" -gt 0 ]; then
-    curl_args+=(--next)
-  fi
-  curl_args+=(
-    -sS -o "${TMP_DIR}/body.${i}"
-    -w "status: %{http_code}\nelapsed_ms: %{time_total}\n"
-    "${MCP_URL}" -H 'content-type: application/json' -d "${payloads[i]}"
-  )
+curl -sS -D "${TMP_DIR}/initialize.headers" -o "${TMP_DIR}/body.0" \
+  -w "status: %{http_code}\nelapsed_ms: %{time_total}\n" \
+  "${MCP_URL}" -H 'content-type: application/json' -d "${payloads[0]}" \
+  > "${TMP_DIR}/meta"
+SESSION_ID="$(awk 'tolower($1) == "mcp-session-id:" { sub(/^[^:]*: */, ""); sub(/\r$/, ""); print; exit }' "${TMP_DIR}/initialize.headers")"
+if [[ -z "${SESSION_ID}" ]]; then
+  echo "Initialize response did not contain Mcp-Session-Id" >&2
+  exit 1
+fi
+
+for i in 1 2 3 4; do
+  curl -sS -o "${TMP_DIR}/body.${i}" \
+    -w "status: %{http_code}\nelapsed_ms: %{time_total}\n" \
+    "${MCP_URL}" -H 'content-type: application/json' \
+    -H "Mcp-Session-Id: ${SESSION_ID}" -d "${payloads[i]}" \
+    >> "${TMP_DIR}/meta"
 done
-curl "${curl_args[@]}" > "${TMP_DIR}/meta"
 
 meta_line=0
 for i in "${!labels[@]}"; do
@@ -84,9 +86,12 @@ else
   for _ in 1 2 3 4; do
     (
       started_at="$(date +%s%3N)"
-      response="$(curl -sS "${MCP_URL}" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke-test","version":"1.0"}}}' \
-        --next "${MCP_URL}" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-        --next "${MCP_URL}" -H 'content-type: application/json' -d "${payload}")"
+      headers="$(mktemp)"
+      curl -sS -D "${headers}" "${MCP_URL}" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke-test","version":"1.0"}}}' >/dev/null
+      session_id="$(awk 'tolower($1) == "mcp-session-id:" { sub(/^[^:]*: */, ""); sub(/\r$/, ""); print; exit }' "${headers}")"
+      rm -f "${headers}"
+      response="$(curl -sS "${MCP_URL}" -H 'content-type: application/json' -H "Mcp-Session-Id: ${session_id}" -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+        --next "${MCP_URL}" -H 'content-type: application/json' -H "Mcp-Session-Id: ${session_id}" -d "${payload}")"
       finished_at="$(date +%s%3N)"
       elapsed_ms="$((finished_at - started_at))"
       echo "elapsed_ms: ${elapsed_ms} ${response}"

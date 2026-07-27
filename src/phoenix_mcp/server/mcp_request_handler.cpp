@@ -6,8 +6,8 @@
 
 #include <folly/coro/BlockingWait.h>
 
-#include "phoenix_mcp/server/server_session.h"
 #include "phoenix_mcp/server/server_message_sink.h"
+#include "phoenix_mcp/server/server_session.h"
 #include "phoenix_mcp/server/session_manager.h"
 #if PXM_WITH_OTEL
 #include <opentelemetry/context/propagation/global_propagator.h>
@@ -114,8 +114,7 @@ McpRequestHandler::McpRequestHandler(
       std::shared_ptr<tool::ToolRegistry>(std::move(tool_registry));
 
   SessionManager::SessionFactory factory =
-      [server_capabilities, server_info, instruction,
-       tool_registry_prototype] {
+      [server_capabilities, server_info, instruction, tool_registry_prototype] {
         return std::make_unique<ServerSession>(
             server_capabilities, server_info, instruction,
             std::make_unique<tool::ToolRegistry>(*tool_registry_prototype));
@@ -180,6 +179,13 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
         "for connection '{}'",
         request.connection_id);
     co_return std::nullopt;
+  }
+
+  if (request.operation == ITransport::RequestOperation::TerminateSession) {
+    session_manager_->remove_session(request.connection_id);
+    ITransport::ResponseEnvelope response;
+    response.status_code = 204;
+    co_return response;
   }
 
   const auto result = co_await session->handle_input_async(

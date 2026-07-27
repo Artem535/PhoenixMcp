@@ -28,6 +28,13 @@ class ITransport {
     ExistingOnly,
   };
 
+  enum class RequestOperation {
+    // A JSON-RPC payload that must be dispatched to the addressed session.
+    Message,
+    // A transport-level request to close an existing logical MCP session.
+    TerminateSession,
+  };
+
   struct RequestEnvelope {
     std::string body;
     std::unordered_map<std::string, std::string> headers;
@@ -47,8 +54,9 @@ class ITransport {
     std::string connection_id;
     // Selects whether the handler may create a session for connection_id.
     // Bootstrap entries are retained only after a successful MCP initialize.
-    SessionLookupMode session_lookup_mode =
-        SessionLookupMode::ConnectionScoped;
+    SessionLookupMode session_lookup_mode = SessionLookupMode::ConnectionScoped;
+    // Transport-level operation. `Message` is the legacy/default path.
+    RequestOperation operation = RequestOperation::Message;
   };
 
   struct ResponseEnvelope {
@@ -63,8 +71,9 @@ class ITransport {
     }
   };
 
-  using Handler = std::function<folly::coro::Task<std::optional<ResponseEnvelope>>(
-      RequestEnvelope)>;
+  using Handler =
+      std::function<folly::coro::Task<std::optional<ResponseEnvelope>>(
+          RequestEnvelope)>;
 
   virtual ~ITransport() = default;
   virtual std::shared_ptr<ServerMessageSink> message_sink() { return nullptr; }

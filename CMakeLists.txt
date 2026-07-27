@@ -283,6 +283,11 @@ if(PHOENIX_MCP_ENABLE_DROGON)
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/phoenix_mcp/transport")
   target_link_libraries(phoenix_mcp_streamable_http_session_store_test
     PRIVATE PhoenixMcp::TransportDrogon GTest::gtest_main)
+  add_executable(phoenix_mcp_streamable_http_test
+    tests/phoenix_mcp/transport/streamable_http_test.cc)
+  target_link_libraries(phoenix_mcp_streamable_http_test
+    PRIVATE PhoenixMcp::TransportDrogon GTest::gtest_main
+            ${PHOENIX_MCP_DROGON_DEPENDENCIES})
   endif()
 
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
@@ -301,6 +306,9 @@ if(PHOENIX_MCP_ENABLE_DROGON)
   endif()
   if(TARGET phoenix_mcp_streamable_http_session_store_test)
     gtest_discover_tests(phoenix_mcp_streamable_http_session_store_test)
+  endif()
+  if(TARGET phoenix_mcp_streamable_http_test)
+    gtest_discover_tests(phoenix_mcp_streamable_http_test)
   endif()
 
   add_test(

@@ -46,3 +46,23 @@ printf '%s\n' "${output}"
 grep --fixed-strings --quiet '"protocolVersion":"2025-06-18"' <<<"${output}"
 grep --fixed-strings --quiet '\"sum\":5' <<<"${output}"
 grep --fixed-strings --quiet '\"async\":true' <<<"${output}"
+
+session_headers="$(mktemp)"
+trap 'rm -f "${session_headers}"; cleanup' EXIT
+curl --silent --show-error -D "${session_headers}" -o /dev/null \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":8,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"streamable-http-test","version":"1.0"}}}' \
+  "${base_url}/mcp"
+session_id="$(awk 'tolower($1) == "mcp-session-id:" { sub(/^[^:]*: */, ""); sub(/\r$/, ""); print; exit }' "${session_headers}")"
+test -n "${session_id}"
+
+sse_output="$(curl --silent --show-error --max-time 1 \
+  -H "Mcp-Session-Id: ${session_id}" "${base_url}/mcp" || true)"
+grep --fixed-strings --quiet 'retry: 1000' <<<"${sse_output}"
+
+delete_status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
+  -X DELETE -H "Mcp-Session-Id: ${session_id}" "${base_url}/mcp")"
+test "${delete_status}" = '204'
+closed_status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
+  -H "Mcp-Session-Id: ${session_id}" "${base_url}/mcp")"
+test "${closed_status}" = '404'

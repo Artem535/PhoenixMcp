@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -25,20 +26,30 @@ struct ReplayResult {
 
 class StreamableHttpSessionStore {
  public:
+  using EventWriter = std::function<bool(const StoredEvent&)>;
+
   std::string create_session();
   bool contains_session(const std::string& session_id) const;
+  void remove_session(const std::string& session_id);
   std::optional<std::string> create_stream(const std::string& session_id);
+  std::optional<std::string> open_stream(const std::string& session_id,
+                                         EventWriter writer);
   std::optional<StoredEvent> append(const std::string& session_id,
                                     const std::string& stream_id,
                                     std::string payload);
   ReplayResult replay(const std::string& session_id,
                       const std::string& event_id) const;
+  std::optional<ReplayResult> resume_stream(const std::string& session_id,
+                                            const std::string& event_id,
+                                            EventWriter writer);
+  bool publish(const std::string& session_id, std::string payload);
 
  private:
   struct Stream {
     size_t next_sequence = 1;
     size_t bytes = 0;
     std::deque<StoredEvent> events;
+    EventWriter writer;
   };
   struct Session {
     size_t next_stream = 1;
@@ -48,6 +59,7 @@ class StreamableHttpSessionStore {
   static constexpr size_t kMaxEvents = 1024;
   static constexpr size_t kMaxBytes = 4 * 1024 * 1024;
   static std::string make_id();
+  static StoredEvent append_locked(Stream& stream, std::string payload);
 
   mutable std::mutex mutex_;
   std::unordered_map<std::string, Session> sessions_;
