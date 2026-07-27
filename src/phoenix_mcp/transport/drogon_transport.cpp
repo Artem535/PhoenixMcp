@@ -32,6 +32,17 @@ std::string format_sse_event(const StoredEvent& event) {
          "\n\n";
 }
 
+bool accepts_sse(const drogon::HttpRequestPtr& request) {
+  const auto accept = request->getHeader("accept");
+  return accept.find("text/event-stream") != std::string::npos ||
+         accept.find("*/*") != std::string::npos;
+}
+
+bool has_json_content_type(const drogon::HttpRequestPtr& request) {
+  return request->getHeader("content-type").find("application/json") !=
+         std::string::npos;
+}
+
 class DrogonServerMessageSink final : public ServerMessageSink {
  public:
   explicit DrogonServerMessageSink(
@@ -125,6 +136,12 @@ int DrogonTransport::run(Handler on_message) {
           const drogon::HttpRequestPtr& req,
           std::function<void(const drogon::HttpResponsePtr&)>&&
               callback) mutable {
+        if (!has_json_content_type(req)) {
+          auto resp = drogon::HttpResponse::newHttpResponse();
+          resp->setStatusCode(drogon::k415UnsupportedMediaType);
+          callback(resp);
+          return;
+        }
         const auto body = req->body();
         if (body.empty()) {
           auto resp = drogon::HttpResponse::newHttpResponse();
@@ -223,10 +240,21 @@ int DrogonTransport::run(Handler on_message) {
           const drogon::HttpRequestPtr& req,
           std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
         const auto session_id = req->getHeader("mcp-session-id");
-        if (session_id.empty() ||
-            !session_store->contains_session(session_id)) {
+        if (session_id.empty()) {
+          auto response = drogon::HttpResponse::newHttpResponse();
+          response->setStatusCode(drogon::k400BadRequest);
+          callback(response);
+          return;
+        }
+        if (!session_store->contains_session(session_id)) {
           auto response = drogon::HttpResponse::newHttpResponse();
           response->setStatusCode(drogon::k404NotFound);
+          callback(response);
+          return;
+        }
+        if (!accepts_sse(req)) {
+          auto response = drogon::HttpResponse::newHttpResponse();
+          response->setStatusCode(drogon::k406NotAcceptable);
           callback(response);
           return;
         }
@@ -253,6 +281,7 @@ int DrogonTransport::run(Handler on_message) {
                   replay->status ==
                       streamable_http_internal::ReplayStatus::kResyncRequired) {
                 shared_stream->send("event: resync-required\ndata: {}\n\n");
+                shared_stream->close();
                 return;
               }
               for (const auto& event : replay->events) {
@@ -274,8 +303,13 @@ int DrogonTransport::run(Handler on_message) {
           std::function<void(const drogon::HttpResponsePtr&)>&&
               callback) mutable {
         const auto session_id = req->getHeader("mcp-session-id");
-        if (session_id.empty() ||
-            !session_store->contains_session(session_id)) {
+        if (session_id.empty()) {
+          auto response = drogon::HttpResponse::newHttpResponse();
+          response->setStatusCode(drogon::k400BadRequest);
+          callback(response);
+          return;
+        }
+        if (!session_store->contains_session(session_id)) {
           auto response = drogon::HttpResponse::newHttpResponse();
           response->setStatusCode(drogon::k404NotFound);
           callback(response);

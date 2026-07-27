@@ -3,9 +3,9 @@
 
 == Scope
 
-This document defines issue #29: Streamable HTTP for the Drogon server
-transport while PhoenixMcp supports MCP `2025-06-18`. It adds stateful HTTP
-sessions, SSE streams, resumability, and a transport-neutral path for
+This document records issue #29: Streamable HTTP for the Drogon server
+transport while PhoenixMcp supports MCP `2025-06-18`. It provides stateful
+HTTP sessions, SSE streams, resumability, and a transport-neutral path for
 server-initiated JSON-RPC messages. It does not add authentication, Origin
 validation, client transports, or Crow parity.
 
@@ -38,6 +38,11 @@ HTTP multi-connection rule while allowing a client to hold multiple streams.
 session. On a successful initialize response, the server emits a
 cryptographically random, visible-ASCII session ID in `Mcp-Session-Id`.
 
+POST requires `Content-Type: application/json` (parameters such as a charset
+are allowed); another media type returns `415 Unsupported Media Type`. A
+malformed or lifecycle-invalid bootstrap returns `400 Bad Request` and does
+not retain a session.
+
 Every later `POST`, `GET`, and `DELETE` carries that header:
 
 * a missing session ID on a request that requires one returns `400 Bad
@@ -54,6 +59,9 @@ expiry, so a client can reconnect with `Last-Event-ID`.
 == SSE and resumability
 
 `GET /mcp` requires a valid session ID and `Accept: text/event-stream`.
+`*/*` is also accepted; an incompatible media type returns `406 Not
+Acceptable`. The response has `Content-Type: text/event-stream`,
+`Cache-Control: no-cache`, and the current `Mcp-Session-Id`.
 It opens a new `StreamState`, or resumes the stream identified by
 `Last-Event-ID`.
 
@@ -84,16 +92,20 @@ changing session or SSE code.
 
 == Verification
 
-The Drogon loopback test suite covers:
+The current CTest coverage combines private-store unit tests and the live
+Drogon example integration test. It covers:
 
-* initialize ID issuance and session-header validation;
-* isolation of two sessions;
-* `DELETE` and idle-expiry cleanup;
-* two simultaneous streams receiving each message exactly once;
-* replay after `Last-Event-ID` from the originating stream only;
-* overflow producing `resync-required`;
-* SSE disconnect preserving the session; and
+* visible-ASCII session IDs, bounded journals, replay, eviction, and
+  `resync-required` decisions;
+* initialize ID issuance, `400` for a missing session ID, `415` for an invalid
+  POST media type, and `406` for an incompatible SSE `Accept` header;
+* SSE response negotiation and heartbeat, `DELETE` cleanup, and `404` after
+  deletion; and
 * TCP disconnect cancelling an in-flight POST.
+
+Multiple live SSE consumers and wire-level replay are covered by the private
+stream-store contract today. A dedicated loopback fixture for those cases is a
+follow-up test-hardening task; it must land before a conformance claim.
 
 These tests are separate from later protocol conformance tests. They prove the
 transport contract before issue #30 exercises the MCP server end-to-end.

@@ -178,6 +178,13 @@ environment, restart policy, and stderr.
 supported primary server adapter; `TransportCrow` is an optional compatibility
 adapter. Neither exposes Drogon or Crow types through public headers.
 
+For the legacy MCP `2025-06-18` dialect, `TransportDrogon` supports stateful
+`POST`/`GET`/`DELETE` at its configured endpoint. `POST initialize` issues an
+`Mcp-Session-Id`; SSE uses `Last-Event-ID` with a per-stream replay limit of
+1,024 events or 4 MiB and emits `resync-required` after eviction. The adapter
+requires JSON POST content and negotiated `text/event-stream`; authentication,
+Origin/host validation, and rate limiting remain separate security work.
+
 Crow's public `SimpleApp` routing API does not expose a connection lifecycle
 hook, so `TransportCrow` does not currently propagate disconnect cancellation.
 It must not claim this behavior until it uses a lower-level Crow integration;
