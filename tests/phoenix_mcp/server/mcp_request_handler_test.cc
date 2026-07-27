@@ -2,24 +2,42 @@
 
 #include <gtest/gtest.h>
 
+#include <folly/coro/BlockingWait.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "phoenix_mcp/tool_registry/tool_registry.h"
+#include "phoenix_mcp/server/server_message_sink.h"
 
 using namespace phoenix_mcp::server;
 using namespace phoenix_mcp::msg::types;
 
 namespace {
 
-std::unique_ptr<McpRequestHandler> make_handler() {
+class RecordingMessageSink final : public ServerMessageSink {
+ public:
+  folly::coro::Task<bool> publish(std::string session_key,
+                                  std::string json_rpc_message) override {
+    session_key_ = std::move(session_key);
+    json_rpc_message_ = std::move(json_rpc_message);
+    co_return true;
+  }
+
+  std::string session_key_;
+  std::string json_rpc_message_;
+};
+
+std::unique_ptr<McpRequestHandler> make_handler(
+    std::shared_ptr<ServerMessageSink> message_sink = nullptr) {
   ServerCapabilities capabilities{
       .tools = ToolsCapabilities{.list_changed = false}};
   Implementation info{.name = "test", .version = "0.0.0"};
   return std::make_unique<McpRequestHandler>(
       capabilities, info, "instruction",
-      std::make_unique<phoenix_mcp::tool::ToolRegistry>());
+      std::make_unique<phoenix_mcp::tool::ToolRegistry>(),
+      std::move(message_sink));
 }
 
 constexpr auto kInitializeRequest =
@@ -110,4 +128,32 @@ TEST(McpRequestHandlerTest, HttpSessionRejectsMissingExistingSession) {
 
   ASSERT_TRUE(response.has_value());
   EXPECT_EQ(response->status_code, 404);
+}
+
+TEST(McpRequestHandlerTest, RemoveSessionMakesExistingOnlyRequestUnavailable) {
+  auto handler = make_handler();
+  ASSERT_TRUE(handler->handle_json(make_request(
+      kInitializeRequest, "http-session-a",
+      ITransport::SessionLookupMode::Bootstrap)));
+
+  handler->remove_session("http-session-a");
+
+  const auto response = handler->handle_json(make_request(
+      R"({"jsonrpc":"2.0","method":"ping","id":2})", "http-session-a",
+      ITransport::SessionLookupMode::ExistingOnly));
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->status_code, 404);
+}
+
+TEST(McpRequestHandlerTest, PublishToSessionUsesInjectedSink) {
+  auto sink = std::make_shared<RecordingMessageSink>();
+  auto handler = make_handler(sink);
+  ASSERT_TRUE(handler->handle_json(make_request(
+      kInitializeRequest, "http-session-a",
+      ITransport::SessionLookupMode::Bootstrap)));
+
+  EXPECT_TRUE(folly::coro::blockingWait(
+      handler->publish_to_session("http-session-a", R"({"method":"ping"})")));
+  EXPECT_EQ(sink->session_key_, "http-session-a");
+  EXPECT_EQ(sink->json_rpc_message_, R"({"method":"ping"})");
 }

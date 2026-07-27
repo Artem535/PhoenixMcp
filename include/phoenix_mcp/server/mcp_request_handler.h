@@ -14,6 +14,7 @@
 namespace phoenix_mcp::server {
 
 class SessionManager;
+class ServerMessageSink;
 
 /// @brief Dispatches transport requests to per-connection `ServerSession`s.
 ///
@@ -28,7 +29,8 @@ class McpRequestHandler {
   McpRequestHandler(msg::types::ServerCapabilities server_capabilities,
                     msg::types::Implementation server_info,
                     std::string instruction,
-                    std::unique_ptr<tool::ToolRegistry> tool_registry);
+                    std::unique_ptr<tool::ToolRegistry> tool_registry,
+                    std::shared_ptr<ServerMessageSink> message_sink = nullptr);
   ~McpRequestHandler();
 
   std::optional<std::string> handle_json(const std::string& request_json);
@@ -39,8 +41,13 @@ class McpRequestHandler {
   folly::coro::Task<std::optional<ITransport::ResponseEnvelope>>
   handle_json_async(ITransport::RequestEnvelope request);
 
+  void remove_session(const std::string& session_key);
+  folly::coro::Task<bool> publish_to_session(
+      std::string session_key, std::string json_rpc_message);
+
  private:
   std::unique_ptr<SessionManager> session_manager_;
+  std::shared_ptr<ServerMessageSink> message_sink_;
 };
 
 }  // namespace phoenix_mcp::server

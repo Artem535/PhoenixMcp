@@ -7,6 +7,7 @@
 #include <folly/coro/BlockingWait.h>
 
 #include "phoenix_mcp/server/server_session.h"
+#include "phoenix_mcp/server/server_message_sink.h"
 #include "phoenix_mcp/server/session_manager.h"
 #if PXM_WITH_OTEL
 #include <opentelemetry/context/propagation/global_propagator.h>
@@ -102,7 +103,9 @@ std::string trace_id_to_string(
 McpRequestHandler::McpRequestHandler(
     msg::types::ServerCapabilities server_capabilities,
     msg::types::Implementation server_info, std::string instruction,
-    std::unique_ptr<tool::ToolRegistry> tool_registry) {
+    std::unique_ptr<tool::ToolRegistry> tool_registry,
+    std::shared_ptr<ServerMessageSink> message_sink)
+    : message_sink_(std::move(message_sink)) {
   // The tool registry is a *prototype*: ToolRegistry is copy-constructible
   // (it's just a map of std::functions plus a shared_ptr<Runtime>), so each
   // new session gets its own copy of the same registered tools rather than
@@ -193,5 +196,18 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
     response.status_code = 400;
   }
   co_return response;
+}
+
+void McpRequestHandler::remove_session(const std::string& session_key) {
+  session_manager_->remove_session(session_key);
+}
+
+folly::coro::Task<bool> McpRequestHandler::publish_to_session(
+    std::string session_key, std::string json_rpc_message) {
+  if (!message_sink_ || !session_manager_->get_session(session_key)) {
+    co_return false;
+  }
+  co_return co_await message_sink_->publish(std::move(session_key),
+                                            std::move(json_rpc_message));
 }
 }  // namespace phoenix_mcp::server
