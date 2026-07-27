@@ -17,10 +17,10 @@ class ITransport {
     std::string body;
     std::unordered_map<std::string, std::string> headers;
     // Cancelled if the transport itself detects the request is no longer
-    // wanted (e.g. client disconnect). None of the current transports wire
-    // this up yet, so it defaults to a token that never cancels; handlers
-    // should merge it with any protocol-level cancellation source rather
-    // than assume it's the only way a request gets cancelled.
+    // wanted (e.g. client disconnect). Transports that cannot detect a
+    // disconnect leave it as a token that never cancels; handlers should merge
+    // it with any protocol-level cancellation source rather than assume it is
+    // the only way a request gets cancelled.
     folly::CancellationToken cancel_token;
     // Stable identity of the underlying connection this request arrived on,
     // so a session-aware handler (SessionManager) can route repeated
@@ -30,6 +30,10 @@ class ITransport {
     // process); a session-aware handler treats an empty id as one shared
     // default connection rather than "no session."
     std::string connection_id;
+    // True only when a stateful transport is attempting to bootstrap a new
+    // logical session. The handler retains that session only if the request
+    // successfully completes the MCP initialization handshake.
+    bool session_bootstrap = false;
   };
 
   struct ResponseEnvelope {

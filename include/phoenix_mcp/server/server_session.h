@@ -73,6 +73,13 @@ class ServerSession {
   /// @brief Check if session is in Operation state
   bool is_ready() const;
 
+  /// @brief Check whether this session accepted an initialize request.
+  ///
+  /// True while waiting for notifications/initialized and during normal
+  /// operation. Stateful transports use this to decide whether to retain a
+  /// newly bootstrapped logical session.
+  bool initialization_accepted() const;
+
   /// @brief Get current state name (for diagnostics)
   std::string state_name() const;
 
