@@ -7,6 +7,7 @@
 ** xref:architecture/transport-disconnect-cancellation-design.adoc[Transport disconnect cancellation]
 ** xref:architecture/transport-disconnect-cancellation-implementation-plan.adoc[Disconnect cancellation plan]
 ** xref:architecture/streamable-http-design.adoc[Streamable HTTP]
+** xref:architecture/streamable-http-implementation-plan.adoc[Streamable HTTP plan]
 ** Epic implementation plans
 *** xref:architecture/epic-0-1-implementation-plan.adoc[Epic 0-1: Foundation]
 *** xref:architecture/epic-2-protocol-server-implementation-plan.adoc[Epic 2: Protocol and server]

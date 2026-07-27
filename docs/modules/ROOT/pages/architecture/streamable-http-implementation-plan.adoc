@@ -1,0 +1,314 @@
+= Streamable HTTP implementation plan
+:toc:
+
+> *For agentic workers:* REQUIRED SUB-SKILL: use
+> `superpowers:subagent-driven-development` (recommended) or
+> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+*Goal:* make `DrogonTransport` a stateful MCP `2025-06-18` Streamable HTTP
+server with bounded, resumable SSE and a transport-neutral outbound-message
+seam.
+
+*Architecture:* HTTP state stays in private Drogon transport files.
+`McpRequestHandler` owns `ServerSession` instances and receives an opaque
+logical session key through `RequestEnvelope::connection_id`. `ServerSession`
+never includes Drogon or an SSE type.
+
+*Tech stack:* C++20, Folly, Drogon, GoogleTest, CTest, CMake, `rtk`.
+
+== Global constraints
+
+* CMake is hand-maintained and authoritative; do not generate it from Xmake.
+* Run every repository command through `rtk`; Xmake is not a release blocker.
+* Keep `2025-06-18` stateful HTTP isolated from later stateless MCP revisions.
+* Installed headers expose no Drogon, Crow, or SSE type.
+* Replay is bounded to 1,024 events and 4 MiB per stream.
+* Keep stdio and existing Drogon disconnect-cancellation tests passing.
+
+== File map
+
+* Create `include/phoenix_mcp/server/server_message_sink.h`.
+* Create `src/phoenix_mcp/transport/streamable_http_session_store.h` and `.cpp`.
+* Modify `include/phoenix_mcp/transport/i_transport.h`.
+* Modify `include/phoenix_mcp/server/server_session.h` and `.cpp`.
+* Modify `include/phoenix_mcp/server/mcp_request_handler.h` and `.cpp`.
+* Modify `include/phoenix_mcp/transport/drogon_transport.h` and `.cpp`.
+* Create `tests/phoenix_mcp/transport/streamable_http_session_store_test.cc`
+  and `tests/phoenix_mcp/transport/streamable_http_test.cc`.
+* Modify `CMakeLists.txt`, Antora navigation, and Streamable HTTP docs.
+
+== Tasks
+
+=== Task 1: Define framework-neutral session contracts
+
+*Files:*
+
+* Create: `include/phoenix_mcp/server/server_message_sink.h`.
+* Modify: `include/phoenix_mcp/transport/i_transport.h`.
+* Modify: `include/phoenix_mcp/server/server_session.h` and `.cpp`.
+* Test: `tests/phoenix_mcp/server/server_session_test.cc`.
+
+*Consumes:* existing `ServerSession` lifecycle and `ITransport` envelope.
+*Produces:* `session_bootstrap`, an initialization result query, and outbound
+JSON-RPC publishing with no HTTP framework types.
+
+- [ ] *Step 1: Write the failing lifecycle tests.*
+
+Add tests named `InitializationAcceptedAfterInitialize` and
+`InitializationNotAcceptedAfterMalformedInitialize`:
+
+```cpp
+EXPECT_FALSE(session->initialization_accepted());
+initialize(*session);
+EXPECT_TRUE(session->initialization_accepted());
+```
+
+- [ ] *Step 2: Verify RED.*
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-debug -R ServerSessionTest.InitializationAccepted'`
+
+Expected: compile or discovery failure because `initialization_accepted()` is
+missing.
+
+- [ ] *Step 3: Add the minimal contract.*
+
+```cpp
+class ServerMessageSink {
+ public:
+  virtual ~ServerMessageSink() = default;
+  virtual folly::coro::Task<bool> publish(
+      std::string session_key, std::string json_rpc_message) = 0;
+};
+```
+
+Add `bool session_bootstrap = false;` to `ITransport::RequestEnvelope` and
+`bool initialization_accepted() const;` to `ServerSession`. The query is true
+only in `Initializing` or `Operation`. Do not add a framework type to either
+public header.
+
+- [ ] *Step 4: Verify GREEN.*
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-debug --target phoenix_mcp_server_session_test phoenix_mcp_public_headers_test && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-debug -R "ServerSessionTest.Initialization.*|phoenix_mcp_public_headers" --output-on-failure'`
+
+Expected: PASS.
+
+- [ ] *Step 5: Commit.*
+
+Run: `rtk run 'git add include/phoenix_mcp/server/server_message_sink.h include/phoenix_mcp/transport/i_transport.h include/phoenix_mcp/server/server_session.h src/phoenix_mcp/server/server_session.cpp tests/phoenix_mcp/server/server_session_test.cc && git commit -m "feat: define streamable HTTP session contracts"'`
+
+=== Task 2: Make McpRequestHandler manage bootstrap, removal, and publishing
+
+*Files:*
+
+* Modify: `include/phoenix_mcp/server/mcp_request_handler.h`.
+* Modify: `src/phoenix_mcp/server/mcp_request_handler.cpp`.
+* Test: `tests/phoenix_mcp/server/mcp_request_handler_test.cc`.
+
+*Consumes:* Task 1's bootstrap flag and lifecycle query.
+*Produces:* session creation only from a successful initialize request,
+explicit removal, and delivery through `ServerMessageSink`.
+
+- [ ] *Step 1: Write failing handler tests.*
+
+Cover bootstrap with `connection_id = "http-session-a"`; a non-initialize
+bootstrap returning `400`; a normal request to a missing session returning
+`404`; and removal making a former ID unavailable.
+
+```cpp
+auto response = folly::coro::blockingWait(handler.handle_json_async(request));
+ASSERT_TRUE(response.has_value());
+EXPECT_EQ(response->status_code, 400);
+```
+
+- [ ] *Step 2: Verify RED.*
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-debug -R McpRequestHandlerTest.HttpSession'`
+
+Expected: tests fail because handler bootstrap/removal APIs do not exist.
+
+- [ ] *Step 3: Implement the boundary.*
+
+Add:
+
+```cpp
+void remove_session(const std::string& session_key);
+folly::coro::Task<bool> publish_to_session(
+    std::string session_key, std::string json_rpc_message);
+```
+
+For `session_bootstrap`, create a `SessionManager` entry, dispatch input, and
+retain it only if `initialization_accepted()` is true; otherwise remove it and
+return `ResponseEnvelope{.status_code = 400}`. A non-bootstrap request never
+creates a missing session and returns `404`. Publishing returns false for a
+missing session or no injected sink.
+
+- [ ] *Step 4: Verify GREEN.*
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-debug --target phoenix_mcp_mcp_request_handler_test phoenix_mcp_session_manager_test && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-debug -R "McpRequestHandlerTest|SessionManagerTest" --output-on-failure'`
+
+Expected: PASS.
+
+- [ ] *Step 5: Commit.*
+
+Run: `rtk run 'git add include/phoenix_mcp/server/mcp_request_handler.h src/phoenix_mcp/server/mcp_request_handler.cpp tests/phoenix_mcp/server/mcp_request_handler_test.cc && git commit -m "feat: manage HTTP session bootstrap in request handler"'`
+
+=== Task 3: Implement a bounded private session and stream store
+
+*Files:*
+
+* Create: `src/phoenix_mcp/transport/streamable_http_session_store.h` and `.cpp`.
+* Test: `tests/phoenix_mcp/transport/streamable_http_session_store_test.cc`.
+* Modify: `CMakeLists.txt`.
+
+*Consumes:* Task 2's opaque session-key lifecycle.
+*Produces:* secure IDs, per-stream journals, replay, and idle-expiry decisions
+without a Drogon type.
+
+- [ ] *Step 1: Write failing store tests.*
+
+Test distinct visible-ASCII session IDs; distinct `stream_id:sequence` event
+IDs; replaying only the originating stream; FIFO eviction after 1,025 events
+or 4 MiB; and an evicted cursor producing `ReplayResult::kResyncRequired`.
+
+```cpp
+const auto first = store.append(session, stream, R"({"method":"log"})");
+store.append(session, stream, R"({"method":"next"})");
+EXPECT_EQ(store.replay(session, first.id).events.size(), 1U);
+```
+
+- [ ] *Step 2: Verify RED.*
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-all-features --target phoenix_mcp_streamable_http_session_store_test'`
+
+Expected: target does not exist.
+
+- [ ] *Step 3: Implement the store.*
+
+Define private `SessionId`, `StreamId`, `StoredEvent`, and `ReplayResult`.
+Generate URL-safe visible-ASCII IDs with `folly::Random::secureRand64()`;
+reject supplied IDs outside ASCII
+`0x21..0x7E`. One mutex protects state. Account serialized bytes and evict
+oldest events until both limits hold. Unknown stream, malformed cursor, or an
+evicted cursor returns `kResyncRequired`, never a partial replay.
+
+- [ ] *Step 4: Wire CMake and verify GREEN.*
+
+Append the private source only under `PHOENIX_MCP_ENABLE_DROGON`. Add the test,
+link it to `PhoenixMcp::TransportDrogon` and `GTest::gtest_main`, and discover
+it conditionally.
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-all-features --target phoenix_mcp_streamable_http_session_store_test && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-all-features -R StreamableHttpSessionStoreTest --output-on-failure'`
+
+Expected: PASS.
+
+- [ ] *Step 5: Commit.*
+
+Run: `rtk run 'git add CMakeLists.txt src/phoenix_mcp/transport/streamable_http_session_store.h src/phoenix_mcp/transport/streamable_http_session_store.cpp tests/phoenix_mcp/transport/streamable_http_session_store_test.cc && git commit -m "feat: add bounded Streamable HTTP session store"'`
+
+=== Task 4: Adapt Drogon POST, GET, DELETE, and SSE delivery
+
+*Files:*
+
+* Modify: `include/phoenix_mcp/transport/drogon_transport.h`.
+* Modify: `src/phoenix_mcp/transport/drogon_transport.cpp`.
+* Create: `tests/phoenix_mcp/transport/streamable_http_test.cc`.
+* Modify: `CMakeLists.txt`.
+
+*Consumes:* Tasks 1-3.
+*Produces:* the Streamable HTTP endpoint, while installed headers remain
+framework-neutral.
+
+- [ ] *Step 1: Write failing loopback tests.*
+
+Assert initialize emits `Mcp-Session-Id`; no ID after initialization gives
+400; unknown ID gives 404; DELETE turns a known ID into 404. Open two SSE
+streams, publish a JSON-RPC message through `publish_to_session()`, and verify
+it appears on exactly one. Close that stream after event one, reconnect with
+`Last-Event-ID`, and receive event two exactly once.
+
+- [ ] *Step 2: Verify RED.*
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-all-features --target phoenix_mcp_streamable_http_test'`
+
+Expected: target does not exist.
+
+- [ ] *Step 3: Implement POST semantics.*
+
+Normalize headers. Without `Mcp-Session-Id`, mint a candidate ID and dispatch
+`RequestEnvelope{.connection_id = candidate, .session_bootstrap = true}`.
+Commit it to the private store only after a successful initialize response and
+return it in the response header. With a supplied ID, validate it in the store
+before dispatch. Keep the existing per-TCP cancellation token for POST; it is
+not the HTTP-session lifetime token.
+
+- [ ] *Step 4: Implement GET, DELETE, and delivery.*
+
+GET validates `Accept: text/event-stream` and the session ID, creates a live
+Drogon stream response with `Content-Type: text/event-stream` and
+`Cache-Control: no-cache`, then replays the tail selected by `Last-Event-ID`.
+Encode each event as:
+
+```text
+id: <stream_id:sequence>
+event: message
+data: <serialized JSON-RPC>
+
+
+```
+
+On `kResyncRequired`, write `event: resync-required` and close without a
+partial tail. The sink appends before writing and picks one live stream only.
+DELETE removes session state, unregisters streams, and invokes
+`McpRequestHandler::remove_session()`.
+
+- [ ] *Step 5: Verify GREEN.*
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-all-features --target phoenix_mcp_drogon_transport_test phoenix_mcp_streamable_http_test && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-all-features -R "Drogon.*Test|StreamableHttpTest" --output-on-failure'`
+
+Expected: PASS, including TCP-disconnect cancellation.
+
+- [ ] *Step 6: Commit.*
+
+Run: `rtk run 'git add include/phoenix_mcp/transport/drogon_transport.h src/phoenix_mcp/transport/drogon_transport.cpp tests/phoenix_mcp/transport/streamable_http_test.cc CMakeLists.txt && git commit -m "feat: implement Streamable HTTP in Drogon transport"'`
+
+=== Task 5: Document and verify the release matrix
+
+*Files:*
+
+* Modify: `docs/modules/ROOT/pages/architecture/streamable-http-design.adoc`.
+* Modify: `docs/modules/ROOT/pages/architecture/index.adoc` when it says
+  Drogon is POST-only.
+
+*Consumes:* Tasks 1-4.
+*Produces:* accurate support statements and all-feature/sanitizer evidence.
+
+- [ ] *Step 1: Update capability documentation.*
+
+Mark Drogon Streamable HTTP supported for `2025-06-18`; record replay limits,
+`resync-required`, and Crow deferral. Do not claim auth or Origin validation.
+
+- [ ] *Step 2: Verify formatting and all-feature suite.*
+
+Run: `rtk run 'git diff --check && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-all-features && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-all-features --output-on-failure'`
+
+Expected: no diff errors and every all-feature test passes.
+
+- [ ] *Step 3: Verify TSan.*
+
+Run: `rtk run 'VCPKG_ROOT=/home/a.durynin/Soft/vcpkg cmake --build --preset linux-tsan && VCPKG_ROOT=/home/a.durynin/Soft/vcpkg ctest --preset linux-tsan --output-on-failure'`
+
+Expected: no TSan race report.
+
+- [ ] *Step 4: Commit.*
+
+Run: `rtk run 'git add docs/modules/ROOT/pages/architecture/streamable-http-design.adoc docs/modules/ROOT/pages/architecture/index.adoc && git commit -m "docs: record Streamable HTTP support"'`
+
+== Plan self-review
+
+Task 1 establishes the framework-neutral seam; Task 2 connects it to the
+server lifecycle; Task 3 provides bounded storage and replay; Task 4 adapts
+Drogon; Task 5 documents and validates the outcome. Crow, authentication,
+client reconnect, and official conformance remain scoped to #40, #32/#33, and
+#30 respectively. Session keys, `stream_id:sequence`, and serialized JSON-RPC
+are named consistently throughout.
