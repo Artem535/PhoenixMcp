@@ -78,6 +78,27 @@ TEST(StreamableHttpSessionStoreTest, PublishesAndRetainsMessageForLiveStream) {
   EXPECT_TRUE(replay.events.empty());
 }
 
+TEST(StreamableHttpSessionStoreTest, PublishesToExactlyOneOfTwoLiveStreams) {
+  StreamableHttpSessionStore store;
+  const auto session = store.create_session();
+  std::vector<StoredEvent> first_delivery;
+  std::vector<StoredEvent> second_delivery;
+
+  ASSERT_TRUE(
+      store.open_stream(session, [&first_delivery](const StoredEvent& event) {
+        first_delivery.push_back(event);
+        return true;
+      }));
+  ASSERT_TRUE(
+      store.open_stream(session, [&second_delivery](const StoredEvent& event) {
+        second_delivery.push_back(event);
+        return true;
+      }));
+
+  ASSERT_TRUE(store.publish(session, R"({"method":"notifications/log"})"));
+  EXPECT_EQ(first_delivery.size() + second_delivery.size(), 1U);
+}
+
 TEST(StreamableHttpSessionStoreTest, ResumesStreamAndReplaysEventsAfterCursor) {
   StreamableHttpSessionStore store;
   const auto session = store.create_session();
