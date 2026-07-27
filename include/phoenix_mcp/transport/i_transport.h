@@ -13,6 +13,18 @@ namespace phoenix_mcp::server {
 
 class ITransport {
  public:
+  enum class SessionLookupMode {
+    // Preserve the legacy transport contract: create a session the first time
+    // this connection is seen. Used by stdio and non-Streamable HTTP adapters.
+    ConnectionScoped,
+    // A stateful HTTP transport is attempting an initialize handshake for a
+    // newly minted logical session.
+    Bootstrap,
+    // A stateful HTTP transport requires the addressed logical session to
+    // already exist; a missing entry is a transport-visible 404.
+    ExistingOnly,
+  };
+
   struct RequestEnvelope {
     std::string body;
     std::unordered_map<std::string, std::string> headers;
@@ -30,10 +42,10 @@ class ITransport {
     // process); a session-aware handler treats an empty id as one shared
     // default connection rather than "no session."
     std::string connection_id;
-    // True only when a stateful transport is attempting to bootstrap a new
-    // logical session. The handler retains that session only if the request
-    // successfully completes the MCP initialization handshake.
-    bool session_bootstrap = false;
+    // Selects whether the handler may create a session for connection_id.
+    // Bootstrap entries are retained only after a successful MCP initialize.
+    SessionLookupMode session_lookup_mode =
+        SessionLookupMode::ConnectionScoped;
   };
 
   struct ResponseEnvelope {

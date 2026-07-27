@@ -50,7 +50,7 @@ never includes Drogon or an SSE type.
 * Test: `tests/phoenix_mcp/server/server_session_test.cc`.
 
 *Consumes:* existing `ServerSession` lifecycle and `ITransport` envelope.
-*Produces:* `session_bootstrap`, an initialization result query, and outbound
+*Produces:* an explicit session lookup mode, an initialization result query, and outbound
 JSON-RPC publishing with no HTTP framework types.
 
 - [ ] *Step 1: Write the failing lifecycle tests.*
@@ -82,7 +82,9 @@ class ServerMessageSink {
 };
 ```
 
-Add `bool session_bootstrap = false;` to `ITransport::RequestEnvelope` and
+Add `ITransport::SessionLookupMode` with `ConnectionScoped`, `Bootstrap`, and
+`ExistingOnly`, defaulting to `ConnectionScoped`, then add it to
+`ITransport::RequestEnvelope`. Add
 `bool initialization_accepted() const;` to `ServerSession`. The query is true
 only in `Initializing` or `Operation`. Do not add a framework type to either
 public header.
@@ -105,7 +107,7 @@ Run: `rtk run 'git add include/phoenix_mcp/server/server_message_sink.h include/
 * Modify: `src/phoenix_mcp/server/mcp_request_handler.cpp`.
 * Test: `tests/phoenix_mcp/server/mcp_request_handler_test.cc`.
 
-*Consumes:* Task 1's bootstrap flag and lifecycle query.
+*Consumes:* Task 1's session lookup mode and lifecycle query.
 *Produces:* session creation only from a successful initialize request,
 explicit removal, and delivery through `ServerMessageSink`.
 
@@ -137,10 +139,11 @@ folly::coro::Task<bool> publish_to_session(
     std::string session_key, std::string json_rpc_message);
 ```
 
-For `session_bootstrap`, create a `SessionManager` entry, dispatch input, and
+For `SessionLookupMode::Bootstrap`, create a `SessionManager` entry, dispatch input, and
 retain it only if `initialization_accepted()` is true; otherwise remove it and
-return `ResponseEnvelope{.status_code = 400}`. A non-bootstrap request never
-creates a missing session and returns `404`. Publishing returns false for a
+return `ResponseEnvelope{.status_code = 400}`. `ExistingOnly` never creates a
+missing session and returns `404`; `ConnectionScoped` preserves the existing
+create-if-missing behavior. Publishing returns false for a
 missing session or no injected sink.
 
 - [ ] *Step 4: Verify GREEN.*
@@ -236,7 +239,8 @@ Expected: target does not exist.
 - [ ] *Step 3: Implement POST semantics.*
 
 Normalize headers. Without `Mcp-Session-Id`, mint a candidate ID and dispatch
-`RequestEnvelope{.connection_id = candidate, .session_bootstrap = true}`.
+`RequestEnvelope{.connection_id = candidate,
+.session_lookup_mode = ITransport::SessionLookupMode::Bootstrap}`.
 Commit it to the private store only after a successful initialize response and
 return it in the response header. With a supplied ID, validate it in the store
 before dispatch. Keep the existing per-TCP cancellation token for POST; it is
