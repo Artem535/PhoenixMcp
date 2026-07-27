@@ -163,6 +163,12 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
 #endif
   auto session = session_manager_->get_session(request.connection_id);
   if (!session) {
+    if (request.session_lookup_mode ==
+        ITransport::SessionLookupMode::ExistingOnly) {
+      ITransport::ResponseEnvelope response;
+      response.status_code = 404;
+      co_return response;
+    }
     session = session_manager_->create_session(request.connection_id);
   }
   if (!session) {
@@ -181,6 +187,11 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
 
   ITransport::ResponseEnvelope response;
   response.body = rfl::json::write(result.value());
+  if (request.session_lookup_mode == ITransport::SessionLookupMode::Bootstrap &&
+      !session->initialization_accepted()) {
+    session_manager_->remove_session(request.connection_id);
+    response.status_code = 400;
+  }
   co_return response;
 }
 }  // namespace phoenix_mcp::server

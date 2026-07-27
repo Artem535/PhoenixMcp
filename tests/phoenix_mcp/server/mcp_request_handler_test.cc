@@ -28,10 +28,13 @@ constexpr auto kInitializeRequest =
     R"("clientInfo":{"name":"test-client","version":"0.0.0"}}})";
 
 ITransport::RequestEnvelope make_request(std::string body,
-                                         std::string connection_id) {
+                                         std::string connection_id,
+                                         ITransport::SessionLookupMode mode =
+                                             ITransport::SessionLookupMode::ConnectionScoped) {
   ITransport::RequestEnvelope request;
   request.body = std::move(body);
   request.connection_id = std::move(connection_id);
+  request.session_lookup_mode = mode;
   return request;
 }
 
@@ -80,4 +83,31 @@ TEST(McpRequestHandlerTest, EmptyConnectionIdSharesOneSessionAcrossRequests) {
   EXPECT_EQ(ping_response->body.find("Invalid request method"),
            std::string::npos)
       << ping_response->body;
+}
+
+TEST(McpRequestHandlerTest, HttpSessionBootstrapRetainsAcceptedInitialize) {
+  auto handler = make_handler();
+
+  const auto response = handler->handle_json(make_request(
+      kInitializeRequest, "http-session-a",
+      ITransport::SessionLookupMode::Bootstrap));
+
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->status_code, 0);
+
+  const auto initialized = handler->handle_json(make_request(
+      R"({"jsonrpc":"2.0","method":"notifications/initialized"})",
+      "http-session-a", ITransport::SessionLookupMode::ExistingOnly));
+  EXPECT_FALSE(initialized.has_value());
+}
+
+TEST(McpRequestHandlerTest, HttpSessionRejectsMissingExistingSession) {
+  auto handler = make_handler();
+
+  const auto response = handler->handle_json(make_request(
+      R"({"jsonrpc":"2.0","method":"ping","id":2})", "missing",
+      ITransport::SessionLookupMode::ExistingOnly));
+
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->status_code, 404);
 }
