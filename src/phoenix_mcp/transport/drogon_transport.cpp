@@ -1,12 +1,14 @@
 #include "drogon_transport.h"
 
+#include <folly/coro/BlockingWait.h>
+#include <spdlog/spdlog.h>
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <folly/coro/BlockingWait.h>
-#include <spdlog/spdlog.h>
+#include "drogon_cancellation_state.h"
 
 #if __has_include(<drogon/drogon.h>)
 #include <drogon/drogon.h>
@@ -39,8 +41,7 @@ std::string connection_id_for(const drogon::HttpRequestPtr& req) {
     // to a fresh id per request rather than crashing; this only means such
     // callers won't get session reuse across requests.
     static std::atomic<uint64_t> next_fallback_id{0};
-    return "drogon-fallback-" +
-           std::to_string(next_fallback_id.fetch_add(1));
+    return "drogon-fallback-" + std::to_string(next_fallback_id.fetch_add(1));
   }
   return "drogon-" + conn->peerAddr().toIpPort();
 }
@@ -52,7 +53,10 @@ DrogonTransport::DrogonTransport() : DrogonTransport(Config{}) {}
 
 DrogonTransport::DrogonTransport(Config cfg,
                                  std::shared_ptr<runtime::Runtime> runtime)
-    : cfg_(std::move(cfg)), runtime_(std::move(runtime)) {}
+    : cfg_(std::move(cfg)),
+      runtime_(std::move(runtime)),
+      cancellation_state_(
+          std::make_shared<drogon_internal::DrogonCancellationState>()) {}
 
 int DrogonTransport::run(Handler on_message) {
 #if PXM_HAS_DROGON
@@ -83,7 +87,8 @@ int DrogonTransport::run(Handler on_message) {
 
   app.registerHandler(
       endpoint,
-      [on_message = std::move(on_message), runtime = runtime_](
+      [on_message = std::move(on_message), runtime = runtime_,
+       cancellation_state = cancellation_state_](
           const drogon::HttpRequestPtr& req,
           std::function<void(const drogon::HttpResponsePtr&)>&&
               callback) mutable {
@@ -102,35 +107,51 @@ int DrogonTransport::run(Handler on_message) {
           request.headers.emplace(header_name, header_value);
         }
         request.connection_id = connection_id_for(req);
+        const auto [cancel_token, first_request_on_connection] =
+            cancellation_state->register_connection(request.connection_id);
+        request.cancel_token = cancel_token;
+
+        if (auto connection = req->getConnectionPtr().lock();
+            first_request_on_connection && connection) {
+          const auto previous_close_callback = connection->getCloseCallback();
+          const auto connection_id = request.connection_id;
+          connection->setCloseCallback(
+              [cancellation_state, connection_id, previous_close_callback](
+                  const trantor::TcpConnectionPtr& closed_connection) {
+                cancellation_state->close(connection_id);
+                if (previous_close_callback) {
+                  previous_close_callback(closed_connection);
+                }
+              });
+        }
 
         std::move(on_message(std::move(request)))
             .scheduleOn(runtime->cpu_executor())
-            .start(
-                [callback = std::move(callback)](
-                    folly::Try<std::optional<ITransport::ResponseEnvelope>>&&
-                        result) mutable {
-                  auto resp = drogon::HttpResponse::newHttpResponse();
-                  if (result.hasException()) {
-                    resp->setStatusCode(drogon::k500InternalServerError);
-                    resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-                    resp->setBody(result.exception().what().toStdString());
-                    callback(resp);
-                    return;
-                  }
+            .start([callback = std::move(callback)](
+                       folly::Try<std::optional<ITransport::ResponseEnvelope>>&&
+                           result) mutable {
+              auto resp = drogon::HttpResponse::newHttpResponse();
+              if (result.hasException()) {
+                resp->setStatusCode(drogon::k500InternalServerError);
+                resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+                resp->setBody(result.exception().what().toStdString());
+                callback(resp);
+                return;
+              }
 
-                  auto response = result.value();
-                  if (!response.has_value()) {
-                    resp->setStatusCode(drogon::k204NoContent);
-                    callback(resp);
-                    return;
-                  }
+              auto response = result.value();
+              if (!response.has_value()) {
+                resp->setStatusCode(drogon::k204NoContent);
+                callback(resp);
+                return;
+              }
 
-                  resp->setStatusCode(static_cast<drogon::HttpStatusCode>(
-                      response->status_or(drogon::k200OK)));
-                  resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-                  resp->setBody(response->body);
-                  callback(resp);
-                });
+              resp->setStatusCode(static_cast<drogon::HttpStatusCode>(
+                  response->status_or(drogon::k200OK)));
+              resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+              resp->setBody(response->body);
+              callback(resp);
+            });
       },
       {drogon::Post});
 

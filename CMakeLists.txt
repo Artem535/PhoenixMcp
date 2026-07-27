@@ -63,7 +63,9 @@ if(PHOENIX_MCP_ENABLE_STDIO)
 endif()
 
 if(PHOENIX_MCP_ENABLE_DROGON)
-  list(APPEND phoenix_mcp_sources src/phoenix_mcp/transport/drogon_transport.cpp)
+  list(APPEND phoenix_mcp_sources
+    src/phoenix_mcp/transport/drogon_cancellation_state.cpp
+    src/phoenix_mcp/transport/drogon_transport.cpp)
 endif()
 
 if(PHOENIX_MCP_ENABLE_CROW)
@@ -166,7 +168,7 @@ if(PHOENIX_MCP_BUILD_EXAMPLES)
   add_executable(using_tool_registry examples/using_tool_registry/main.cpp)
   target_link_libraries(using_tool_registry PRIVATE PhoenixMcp::Server)
 
-  if(PHOENIX_MCP_ENABLE_DROGON)
+  if(UNIX AND PHOENIX_MCP_ENABLE_DROGON)
     add_executable(create_server_http examples/create_server_http/main.cpp)
     target_link_libraries(create_server_http PRIVATE PhoenixMcp::Server
                                                      PhoenixMcp::TransportDrogon)
@@ -259,6 +261,23 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_tool_registry_test
     PRIVATE PhoenixMcp::Server GTest::gtest_main)
 
+  if(UNIX AND PHOENIX_MCP_ENABLE_STDIO)
+    add_executable(phoenix_mcp_stdio_transport_test
+      tests/phoenix_mcp/transport/stdio_transport_test.cc)
+    target_link_libraries(phoenix_mcp_stdio_transport_test
+      PRIVATE PhoenixMcp::TransportStdio GTest::gtest_main)
+  endif()
+
+  if(PHOENIX_MCP_ENABLE_DROGON)
+    add_executable(phoenix_mcp_drogon_transport_test
+      tests/phoenix_mcp/transport/drogon_transport_test.cc)
+    target_include_directories(phoenix_mcp_drogon_transport_test
+      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/phoenix_mcp/transport")
+    target_link_libraries(phoenix_mcp_drogon_transport_test
+      PRIVATE PhoenixMcp::TransportDrogon GTest::gtest_main
+              ${PHOENIX_MCP_DROGON_DEPENDENCIES})
+  endif()
+
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
   gtest_discover_tests(phoenix_mcp_json_rpc_codec_test)
   gtest_discover_tests(phoenix_mcp_dialect_test)
@@ -267,6 +286,12 @@ if(BUILD_TESTING)
   gtest_discover_tests(phoenix_mcp_session_manager_test)
   gtest_discover_tests(phoenix_mcp_mcp_request_handler_test)
   gtest_discover_tests(phoenix_mcp_tool_registry_test)
+  if(TARGET phoenix_mcp_stdio_transport_test)
+    gtest_discover_tests(phoenix_mcp_stdio_transport_test)
+  endif()
+  if(TARGET phoenix_mcp_drogon_transport_test)
+    gtest_discover_tests(phoenix_mcp_drogon_transport_test)
+  endif()
 
   add_test(
     NAME phoenix_mcp_public_headers

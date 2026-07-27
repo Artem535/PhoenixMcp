@@ -41,9 +41,11 @@ describes real gaps, not assumed ones:
   timeout and a session cap, but its own header says it plainly: "Not wired
   into any transport yet: transports/McpRequestHandler still use a single,
   process-lifetime ServerSession."
-* `ITransport::RequestEnvelope` carries a `cancel_token`, but its own comment
-  says "None of the current transports wire this up yet" — a client
-  disconnect does not currently cancel anything.
+* `ITransport::RequestEnvelope` carries a `cancel_token`. `StdioTransport`
+  cancels it on input-pipe hangup and `DrogonTransport` cancels it when the
+  corresponding TCP connection closes. `CrowTransport` deliberately remains
+  without disconnect propagation: its public `SimpleApp` route API exposes no
+  connection lifecycle hook.
 * `DrogonTransport::run()` (`src/phoenix_mcp/transport/drogon_transport.cpp`)
   is a single-shot `POST` handler returning one JSON body. There is no
   `Mcp-Session-Id` header, no `GET` SSE stream, no `DELETE` for session
@@ -149,16 +151,15 @@ xref:architecture/index.adoc[SDK architecture]'s statement that "remote
 cancellation, a deadline, disconnect, or shutdown requests cancellation
 through the token."
 
-- [ ] Write a failing test that starts a long-running tool call, simulates a
-  transport-level disconnect (close the stdio pipe / drop the HTTP
-  connection), and asserts the handler's `folly::CancellationToken` observes
-  cancellation within a bounded time.
-- [ ] Implement disconnect detection per transport and cancel the matching
-  `RequestEnvelope::cancel_token`'s source.
-- [ ] Confirm `ServerSession` already merges transport-level and
-  protocol-level (`notifications/cancelled`) cancellation correctly — this
-  was designed in #18 but never exercised by a transport before now.
-- [ ] Commit with `feat: propagate transport disconnects as request cancellation`.
+- [x] Add bounded tests that close a stdio input pipe and a live Drogon TCP
+  connection while a handler is active; each handler observes cancellation.
+- [x] Implement disconnect detection in stdio and Drogon and cancel the
+  matching `RequestEnvelope::cancel_token` source.
+- [x] Confirm `ServerSession` merges transport-level and protocol-level
+  (`notifications/cancelled`) cancellation before invoking a tool handler.
+- [x] Document Crow as deferred: its public `SimpleApp` API exposes no safe
+  connection-close hook, so it cannot truthfully provide transport-level
+  disconnect cancellation yet.
 
 === Task 4: Streamable HTTP on DrogonTransport
 

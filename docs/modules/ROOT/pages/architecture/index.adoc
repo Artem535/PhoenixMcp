@@ -161,7 +161,8 @@ Cancellation is cooperative. Each request has a `folly::CancellationSource`;
 remote cancellation, a deadline, disconnect, or shutdown requests cancellation
 through the token passed to tool, resource, and prompt handlers. The SDK settles
 protocol state after a bounded grace period but never forcefully terminates a
-C++ thread.
+C++ thread. `TransportStdio` propagates an input-pipe hangup, and
+`TransportDrogon` propagates a TCP close, to the active request token.
 
 == Transport seams
 
@@ -175,8 +176,12 @@ environment, restart policy, and stderr.
 
 `TransportHttp` defines Streamable HTTP behavior. `TransportDrogon` is the
 supported primary server adapter; `TransportCrow` is an optional compatibility
-adapter. Neither exposes Drogon or Crow types through public headers. Both must
-pass the same transport contract suite.
+adapter. Neither exposes Drogon or Crow types through public headers.
+
+Crow's public `SimpleApp` routing API does not expose a connection lifecycle
+hook, so `TransportCrow` does not currently propagate disconnect cancellation.
+It must not claim this behavior until it uses a lower-level Crow integration;
+this is an explicit compatibility limitation, not a best-effort fallback.
 
 == Errors, security, and observability
 
