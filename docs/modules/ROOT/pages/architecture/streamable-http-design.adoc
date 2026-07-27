@@ -101,11 +101,12 @@ Drogon example integration test. It covers:
   POST media type, and `406` for an incompatible SSE `Accept` header;
 * SSE response negotiation and heartbeat, `DELETE` cleanup, and `404` after
   deletion; and
+* server-initiated SSE delivery and wire-level replay after a reconnect with
+  `Last-Event-ID`; and
 * TCP disconnect cancelling an in-flight POST.
 
-Multiple live SSE consumers and wire-level replay are covered by the private
-stream-store contract today. A dedicated loopback fixture for those cases is a
-follow-up test-hardening task; it must land before a conformance claim.
+The private stream-store contract additionally verifies that, with two live
+streams, each server-initiated message is selected for exactly one stream.
 
 These tests are separate from later protocol conformance tests. They prove the
 transport contract before issue #30 exercises the MCP server end-to-end.
