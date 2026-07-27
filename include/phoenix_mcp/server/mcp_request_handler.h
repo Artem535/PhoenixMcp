@@ -44,6 +44,7 @@ class McpRequestHandler {
   void remove_session(const std::string& session_key);
   folly::coro::Task<bool> publish_to_session(
       std::string session_key, std::string json_rpc_message);
+  void set_message_sink(std::shared_ptr<ServerMessageSink> message_sink);
 
  private:
   std::unique_ptr<SessionManager> session_manager_;

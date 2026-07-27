@@ -2,6 +2,7 @@
 #define PHOENIX_MCP_TRANSPORT_I_TRANSPORT_H_
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -10,6 +11,8 @@
 #include <folly/coro/Task.h>
 
 namespace phoenix_mcp::server {
+
+class ServerMessageSink;
 
 class ITransport {
  public:
@@ -64,6 +67,7 @@ class ITransport {
       RequestEnvelope)>;
 
   virtual ~ITransport() = default;
+  virtual std::shared_ptr<ServerMessageSink> message_sink() { return nullptr; }
   virtual int run(Handler on_message) = 0;
 };
 

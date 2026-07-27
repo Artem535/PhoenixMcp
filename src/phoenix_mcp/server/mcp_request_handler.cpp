@@ -210,4 +210,9 @@ folly::coro::Task<bool> McpRequestHandler::publish_to_session(
   co_return co_await message_sink_->publish(std::move(session_key),
                                             std::move(json_rpc_message));
 }
+
+void McpRequestHandler::set_message_sink(
+    std::shared_ptr<ServerMessageSink> message_sink) {
+  message_sink_ = std::move(message_sink);
+}
 }  // namespace phoenix_mcp::server
