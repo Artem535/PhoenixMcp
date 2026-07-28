@@ -7,6 +7,7 @@
 #include "phoenix_mcp/server/mcp_request_handler.h"
 #include "phoenix_mcp/server/mcp_server.h"
 #include "phoenix_mcp/server/server.h"
+#include "phoenix_mcp/server/server_message_sink.h"
 #include "phoenix_mcp/server/server_session.h"
 #include "phoenix_mcp/server/session_manager.h"
 #include "phoenix_mcp/server/session_states.h"

@@ -64,6 +64,23 @@ TEST(ServerSessionTest, InitializeRequestMovesToInitializing) {
   EXPECT_FALSE(session->is_ready());
 }
 
+TEST(ServerSessionTest, InitializationAcceptedAfterInitialize) {
+  const auto session = make_session();
+
+  EXPECT_FALSE(session->initialization_accepted());
+  session->handle_input(kInitializeRequest);
+
+  EXPECT_TRUE(session->initialization_accepted());
+}
+
+TEST(ServerSessionTest, InitializationNotAcceptedAfterMalformedInitialize) {
+  const auto session = make_session();
+
+  session->handle_input("{");
+
+  EXPECT_FALSE(session->initialization_accepted());
+}
+
 TEST(ServerSessionTest, RejectsRequestsWhileInitializing) {
   const auto session = make_session();
   session->handle_input(kInitializeRequest);

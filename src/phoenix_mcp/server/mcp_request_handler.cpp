@@ -6,6 +6,7 @@
 
 #include <folly/coro/BlockingWait.h>
 
+#include "phoenix_mcp/server/server_message_sink.h"
 #include "phoenix_mcp/server/server_session.h"
 #include "phoenix_mcp/server/session_manager.h"
 #if PXM_WITH_OTEL
@@ -102,7 +103,9 @@ std::string trace_id_to_string(
 McpRequestHandler::McpRequestHandler(
     msg::types::ServerCapabilities server_capabilities,
     msg::types::Implementation server_info, std::string instruction,
-    std::unique_ptr<tool::ToolRegistry> tool_registry) {
+    std::unique_ptr<tool::ToolRegistry> tool_registry,
+    std::shared_ptr<ServerMessageSink> message_sink)
+    : message_sink_(std::move(message_sink)) {
   // The tool registry is a *prototype*: ToolRegistry is copy-constructible
   // (it's just a map of std::functions plus a shared_ptr<Runtime>), so each
   // new session gets its own copy of the same registered tools rather than
@@ -111,8 +114,7 @@ McpRequestHandler::McpRequestHandler(
       std::shared_ptr<tool::ToolRegistry>(std::move(tool_registry));
 
   SessionManager::SessionFactory factory =
-      [server_capabilities, server_info, instruction,
-       tool_registry_prototype] {
+      [server_capabilities, server_info, instruction, tool_registry_prototype] {
         return std::make_unique<ServerSession>(
             server_capabilities, server_info, instruction,
             std::make_unique<tool::ToolRegistry>(*tool_registry_prototype));
@@ -163,6 +165,12 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
 #endif
   auto session = session_manager_->get_session(request.connection_id);
   if (!session) {
+    if (request.session_lookup_mode ==
+        ITransport::SessionLookupMode::ExistingOnly) {
+      ITransport::ResponseEnvelope response;
+      response.status_code = 404;
+      co_return response;
+    }
     session = session_manager_->create_session(request.connection_id);
   }
   if (!session) {
@@ -173,6 +181,13 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
     co_return std::nullopt;
   }
 
+  if (request.operation == ITransport::RequestOperation::TerminateSession) {
+    session_manager_->remove_session(request.connection_id);
+    ITransport::ResponseEnvelope response;
+    response.status_code = 204;
+    co_return response;
+  }
+
   const auto result = co_await session->handle_input_async(
       std::move(request.body), request.cancel_token);
   if (!result.has_value()) {
@@ -181,6 +196,29 @@ McpRequestHandler::handle_json_async(ITransport::RequestEnvelope request) {
 
   ITransport::ResponseEnvelope response;
   response.body = rfl::json::write(result.value());
+  if (request.session_lookup_mode == ITransport::SessionLookupMode::Bootstrap &&
+      !session->initialization_accepted()) {
+    session_manager_->remove_session(request.connection_id);
+    response.status_code = 400;
+  }
   co_return response;
+}
+
+void McpRequestHandler::remove_session(const std::string& session_key) {
+  session_manager_->remove_session(session_key);
+}
+
+folly::coro::Task<bool> McpRequestHandler::publish_to_session(
+    std::string session_key, std::string json_rpc_message) {
+  if (!message_sink_ || !session_manager_->get_session(session_key)) {
+    co_return false;
+  }
+  co_return co_await message_sink_->publish(std::move(session_key),
+                                            std::move(json_rpc_message));
+}
+
+void McpRequestHandler::set_message_sink(
+    std::shared_ptr<ServerMessageSink> message_sink) {
+  message_sink_ = std::move(message_sink);
 }
 }  // namespace phoenix_mcp::server

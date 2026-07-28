@@ -13,7 +13,9 @@ class McpServer {
  public:
   McpServer(std::unique_ptr<ITransport> transport,
             std::unique_ptr<McpRequestHandler> handler)
-      : transport_(std::move(transport)), handler_(std::move(handler)) {}
+      : transport_(std::move(transport)), handler_(std::move(handler)) {
+    handler_->set_message_sink(transport_->message_sink());
+  }
 
   int run() {
     return transport_->run([this](ITransport::RequestEnvelope request) {

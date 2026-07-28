@@ -291,6 +291,11 @@ bool ServerSession::is_ready() const {
   return is_operation();
 }
 
+bool ServerSession::initialization_accepted() const {
+  std::lock_guard lock(fsm_mutex_);
+  return is_initializing() || is_operation();
+}
+
 std::string ServerSession::state_name() const {
   std::lock_guard lock(fsm_mutex_);
   if (is_uninitialized()) return "Uninitialized";

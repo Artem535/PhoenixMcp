@@ -15,6 +15,10 @@ namespace drogon_internal {
 class DrogonCancellationState;
 }
 
+namespace streamable_http_internal {
+class StreamableHttpSessionStore;
+}
+
 class DrogonTransport final : public ITransport {
  public:
   struct Config {
@@ -31,11 +35,15 @@ class DrogonTransport final : public ITransport {
                                runtime::make_default_runtime());
 
   int run(Handler on_message) override;
+  std::shared_ptr<ServerMessageSink> message_sink() override;
 
  private:
   Config cfg_;
   std::shared_ptr<runtime::Runtime> runtime_;
   std::shared_ptr<drogon_internal::DrogonCancellationState> cancellation_state_;
+  std::shared_ptr<streamable_http_internal::StreamableHttpSessionStore>
+      session_store_;
+  std::shared_ptr<ServerMessageSink> message_sink_;
 };
 
 }  // namespace phoenix_mcp::server

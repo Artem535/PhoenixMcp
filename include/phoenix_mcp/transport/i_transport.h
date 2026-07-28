@@ -2,6 +2,7 @@
 #define PHOENIX_MCP_TRANSPORT_I_TRANSPORT_H_
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -11,16 +12,37 @@
 
 namespace phoenix_mcp::server {
 
+class ServerMessageSink;
+
 class ITransport {
  public:
+  enum class SessionLookupMode {
+    // Preserve the legacy transport contract: create a session the first time
+    // this connection is seen. Used by stdio and non-Streamable HTTP adapters.
+    ConnectionScoped,
+    // A stateful HTTP transport is attempting an initialize handshake for a
+    // newly minted logical session.
+    Bootstrap,
+    // A stateful HTTP transport requires the addressed logical session to
+    // already exist; a missing entry is a transport-visible 404.
+    ExistingOnly,
+  };
+
+  enum class RequestOperation {
+    // A JSON-RPC payload that must be dispatched to the addressed session.
+    Message,
+    // A transport-level request to close an existing logical MCP session.
+    TerminateSession,
+  };
+
   struct RequestEnvelope {
     std::string body;
     std::unordered_map<std::string, std::string> headers;
     // Cancelled if the transport itself detects the request is no longer
-    // wanted (e.g. client disconnect). None of the current transports wire
-    // this up yet, so it defaults to a token that never cancels; handlers
-    // should merge it with any protocol-level cancellation source rather
-    // than assume it's the only way a request gets cancelled.
+    // wanted (e.g. client disconnect). Transports that cannot detect a
+    // disconnect leave it as a token that never cancels; handlers should merge
+    // it with any protocol-level cancellation source rather than assume it is
+    // the only way a request gets cancelled.
     folly::CancellationToken cancel_token;
     // Stable identity of the underlying connection this request arrived on,
     // so a session-aware handler (SessionManager) can route repeated
@@ -30,6 +52,11 @@ class ITransport {
     // process); a session-aware handler treats an empty id as one shared
     // default connection rather than "no session."
     std::string connection_id;
+    // Selects whether the handler may create a session for connection_id.
+    // Bootstrap entries are retained only after a successful MCP initialize.
+    SessionLookupMode session_lookup_mode = SessionLookupMode::ConnectionScoped;
+    // Transport-level operation. `Message` is the legacy/default path.
+    RequestOperation operation = RequestOperation::Message;
   };
 
   struct ResponseEnvelope {
@@ -44,10 +71,12 @@ class ITransport {
     }
   };
 
-  using Handler = std::function<folly::coro::Task<std::optional<ResponseEnvelope>>(
-      RequestEnvelope)>;
+  using Handler =
+      std::function<folly::coro::Task<std::optional<ResponseEnvelope>>(
+          RequestEnvelope)>;
 
   virtual ~ITransport() = default;
+  virtual std::shared_ptr<ServerMessageSink> message_sink() { return nullptr; }
   virtual int run(Handler on_message) = 0;
 };
 

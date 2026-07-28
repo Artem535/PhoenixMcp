@@ -65,6 +65,7 @@ endif()
 if(PHOENIX_MCP_ENABLE_DROGON)
   list(APPEND phoenix_mcp_sources
     src/phoenix_mcp/transport/drogon_cancellation_state.cpp
+    src/phoenix_mcp/transport/streamable_http_session_store.cpp
     src/phoenix_mcp/transport/drogon_transport.cpp)
 endif()
 
@@ -268,14 +269,25 @@ if(BUILD_TESTING)
       PRIVATE PhoenixMcp::TransportStdio GTest::gtest_main)
   endif()
 
-  if(PHOENIX_MCP_ENABLE_DROGON)
-    add_executable(phoenix_mcp_drogon_transport_test
+if(PHOENIX_MCP_ENABLE_DROGON)
+  add_executable(phoenix_mcp_drogon_transport_test
       tests/phoenix_mcp/transport/drogon_transport_test.cc)
     target_include_directories(phoenix_mcp_drogon_transport_test
       PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/phoenix_mcp/transport")
     target_link_libraries(phoenix_mcp_drogon_transport_test
       PRIVATE PhoenixMcp::TransportDrogon GTest::gtest_main
               ${PHOENIX_MCP_DROGON_DEPENDENCIES})
+  add_executable(phoenix_mcp_streamable_http_session_store_test
+    tests/phoenix_mcp/transport/streamable_http_session_store_test.cc)
+  target_include_directories(phoenix_mcp_streamable_http_session_store_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/phoenix_mcp/transport")
+  target_link_libraries(phoenix_mcp_streamable_http_session_store_test
+    PRIVATE PhoenixMcp::TransportDrogon GTest::gtest_main)
+  add_executable(phoenix_mcp_streamable_http_test
+    tests/phoenix_mcp/transport/streamable_http_test.cc)
+  target_link_libraries(phoenix_mcp_streamable_http_test
+    PRIVATE PhoenixMcp::TransportDrogon GTest::gtest_main
+            ${PHOENIX_MCP_DROGON_DEPENDENCIES})
   endif()
 
   gtest_discover_tests(phoenix_mcp_json_rpc_message_test)
@@ -291,6 +303,12 @@ if(BUILD_TESTING)
   endif()
   if(TARGET phoenix_mcp_drogon_transport_test)
     gtest_discover_tests(phoenix_mcp_drogon_transport_test)
+  endif()
+  if(TARGET phoenix_mcp_streamable_http_session_store_test)
+    gtest_discover_tests(phoenix_mcp_streamable_http_session_store_test)
+  endif()
+  if(TARGET phoenix_mcp_streamable_http_test)
+    gtest_discover_tests(phoenix_mcp_streamable_http_test)
   endif()
 
   add_test(
