@@ -1,6 +1,10 @@
 #ifndef PHOENIX_MCP_SERVER_SERVER_SESSION_H_
 #define PHOENIX_MCP_SERVER_SERVER_SESSION_H_
 
+#include <folly/CancellationToken.h>
+#include <folly/coro/Task.h>
+#include <spdlog/spdlog.h>
+
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -8,10 +12,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-
-#include <folly/CancellationToken.h>
-#include <folly/coro/Task.h>
-#include <spdlog/spdlog.h>
 
 #include "phoenix_mcp/core/error.h"
 #include "phoenix_mcp/protocol/dialect.h"
@@ -142,7 +142,8 @@ class ServerSession {
   void handle_notification(const protocol::JsonRpcMessage& envelope);
 
   folly::coro::Task<rfl::Generic> handle_operation_async(
-      const msg::types::Request& request, folly::CancellationToken cancel_token);
+      const msg::types::Request& request,
+      folly::CancellationToken cancel_token);
 
   folly::coro::Task<rfl::Generic> call_tool_async(
       const msg::types::CallToolRequest& call_request,
@@ -173,8 +174,10 @@ class ServerSession {
   // Decodes `initialize_request` through the bootstrap dialect to read the
   // client's requested protocolVersion, then resolves it via
   // `protocol::make_dialect`. Returns the negotiated dialect, or an McpError
-  // (Protocol-category) if the request is malformed or the version is
-  // unsupported. Does not mutate `dialect_` itself.
+  // (Protocol-category) if the request is malformed. An unsupported
+  // protocolVersion is not an error: per the MCP negotiation rule, the
+  // latest supported dialect is returned so the initialize result can offer
+  // it to the client. Does not mutate `dialect_` itself.
   folly::Expected<std::unique_ptr<protocol::ProtocolDialect>, core::McpError>
   negotiate_dialect(const msg::types::Request& initialize_request) const;
 

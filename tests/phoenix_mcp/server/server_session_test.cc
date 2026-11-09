@@ -412,8 +412,7 @@ TEST(ServerSessionTest, RejectsMalformedJsonWithCodecErrorCode) {
   EXPECT_NE(response_json.find("-32700"), std::string::npos) << response_json;
 }
 
-TEST(ServerSessionTest,
-     InitializeWithUnsupportedProtocolVersionFailsInitialization) {
+TEST(ServerSessionTest, InitializeWithUnsupportedProtocolVersionOffersLatest) {
   const auto session = make_session();
   const auto response = session->handle_input(
       R"({"jsonrpc":"2.0","method":"initialize","id":1,)"
@@ -421,11 +420,23 @@ TEST(ServerSessionTest,
       R"("clientInfo":{"name":"test-client","version":"0.0.0"}}})");
   ASSERT_TRUE(response.has_value());
   const auto response_json = rfl::json::write(*response);
-  // -32600 is JsonRpcCodec's ErrorCode::InvalidRequest mapped to its
-  // JSON-RPC wire code — negotiation failure is a Protocol-category error,
-  // not a session-invented one.
-  EXPECT_NE(response_json.find("-32600"), std::string::npos) << response_json;
-  EXPECT_EQ(session->state_name(), "Failed");
+  // MCP negotiation rule: an unknown requested protocolVersion is not an
+  // error — the initialize result offers the latest supported version and
+  // the session proceeds to Initializing.
+  EXPECT_EQ(response_json.find("\"error\""), std::string::npos)
+      << response_json;
+  EXPECT_NE(response_json.find("2025-11-25"), std::string::npos)
+      << response_json;
+  EXPECT_EQ(session->state_name(), "Initializing");
+}
+
+TEST(ServerSessionTest, InitializeEchoesNegotiatedProtocolVersion) {
+  const auto session = make_session();
+  const auto response = session->handle_input(kInitializeRequest);
+  ASSERT_TRUE(response.has_value());
+  const auto response_json = rfl::json::write(*response);
+  EXPECT_NE(response_json.find("2025-06-18"), std::string::npos)
+      << response_json;
 }
 
 TEST(ServerSessionTest, CloseForceSettlesAfterSettleTimeoutElapses) {
