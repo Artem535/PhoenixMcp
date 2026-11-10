@@ -26,11 +26,10 @@ TEST_F(Dialect20250618Test, CapabilityRules) {
 }
 
 TEST_F(Dialect20250618Test, DecodeInitializeRequest) {
-  JsonRpcMessage msg =
-      Request{.jsonrpc = "2.0",
-              .method = "initialize",
-              .id = 1,
-              .params = rfl::Generic{rfl::Generic::Object{}}};
+  JsonRpcMessage msg = Request{.jsonrpc = "2.0",
+                               .method = "initialize",
+                               .id = 1,
+                               .params = rfl::Generic{rfl::Generic::Object{}}};
   auto result = dialect_->decode(msg);
   ASSERT_TRUE(result.hasValue());
   EXPECT_TRUE(std::holds_alternative<McpRequest>(result.value()));
@@ -39,8 +38,7 @@ TEST_F(Dialect20250618Test, DecodeInitializeRequest) {
 }
 
 TEST_F(Dialect20250618Test, DecodePingRequest) {
-  JsonRpcMessage msg =
-      Request{.jsonrpc = "2.0", .method = "ping", .id = 1};
+  JsonRpcMessage msg = Request{.jsonrpc = "2.0", .method = "ping", .id = 1};
   auto result = dialect_->decode(msg);
   ASSERT_TRUE(result.hasValue());
   auto& req = std::get<McpRequest>(result.value());
@@ -59,13 +57,11 @@ TEST_F(Dialect20250618Test, DecodeListToolsRequest) {
 TEST_F(Dialect20250618Test, DecodeCallToolRequest) {
   rfl::Generic::Object args;
   args["x"] = rfl::Generic{5};
-  CallToolParams call_params{.name = "test_tool",
-                             .arguments = args};
-  JsonRpcMessage msg =
-      Request{.jsonrpc = "2.0",
-              .method = "tools/call",
-              .id = 1,
-              .params = rfl::to_generic(call_params)};
+  CallToolParams call_params{.name = "test_tool", .arguments = args};
+  JsonRpcMessage msg = Request{.jsonrpc = "2.0",
+                               .method = "tools/call",
+                               .id = 1,
+                               .params = rfl::to_generic(call_params)};
   auto result = dialect_->decode(msg);
   ASSERT_TRUE(result.hasValue());
   auto& req = std::get<McpRequest>(result.value());
@@ -73,39 +69,34 @@ TEST_F(Dialect20250618Test, DecodeCallToolRequest) {
 }
 
 TEST_F(Dialect20250618Test, DecodeInitializedNotification) {
-  JsonRpcMessage msg = Notification{
-      .jsonrpc = "2.0", .method = "notifications/initialized"};
+  JsonRpcMessage msg =
+      Notification{.jsonrpc = "2.0", .method = "notifications/initialized"};
   auto result = dialect_->decode(msg);
   ASSERT_TRUE(result.hasValue());
   auto& notif = std::get<McpNotification>(result.value());
-  EXPECT_TRUE(
-      std::holds_alternative<InitializeNotificationCall>(notif));
+  EXPECT_TRUE(std::holds_alternative<InitializeNotificationCall>(notif));
 }
 
 TEST_F(Dialect20250618Test, DecodeCancelNotification) {
-  JsonRpcMessage msg = Notification{
-      .jsonrpc = "2.0", .method = "notifications/cancelled"};
+  JsonRpcMessage msg =
+      Notification{.jsonrpc = "2.0", .method = "notifications/cancelled"};
   auto result = dialect_->decode(msg);
   ASSERT_TRUE(result.hasValue());
   auto& notif = std::get<McpNotification>(result.value());
-  EXPECT_TRUE(
-      std::holds_alternative<CancelNotificationCall>(notif));
+  EXPECT_TRUE(std::holds_alternative<CancelNotificationCall>(notif));
 }
 
 TEST_F(Dialect20250618Test, DecodeToolListChangedNotification) {
   JsonRpcMessage msg = Notification{
-      .jsonrpc = "2.0",
-      .method = "notifications/tools/list_changed"};
+      .jsonrpc = "2.0", .method = "notifications/tools/list_changed"};
   auto result = dialect_->decode(msg);
   ASSERT_TRUE(result.hasValue());
   auto& notif = std::get<McpNotification>(result.value());
-  EXPECT_TRUE(std::holds_alternative<
-              ToolListChangedNotificationCall>(notif));
+  EXPECT_TRUE(std::holds_alternative<ToolListChangedNotificationCall>(notif));
 }
 
 TEST_F(Dialect20250618Test, DecodeUnknownMethod) {
-  JsonRpcMessage msg =
-      Request{.jsonrpc = "2.0", .method = "unknown", .id = 1};
+  JsonRpcMessage msg = Request{.jsonrpc = "2.0", .method = "unknown", .id = 1};
   auto result = dialect_->decode(msg);
   EXPECT_FALSE(result.hasValue());
   EXPECT_EQ(result.error().code(), ErrorCode::MethodNotFound);
@@ -113,19 +104,15 @@ TEST_F(Dialect20250618Test, DecodeUnknownMethod) {
 
 TEST_F(Dialect20250618Test, DecodeResponseFails) {
   JsonRpcMessage msg =
-      Response{.jsonrpc = "2.0",
-               .result = rfl::Generic{},
-               .id = 1};
+      Response{.jsonrpc = "2.0", .result = rfl::Generic{}, .id = 1};
   auto result = dialect_->decode(msg);
   EXPECT_FALSE(result.hasValue());
   EXPECT_EQ(result.error().code(), ErrorCode::InvalidRequest);
 }
 
 TEST_F(Dialect20250618Test, EncodeResult) {
-  McpRequest req = InitializeCall{
-      InitializeRequest{Request{.jsonrpc = "2.0",
-                                .method = "initialize",
-                                .id = 1}}};
+  McpRequest req = InitializeCall{InitializeRequest{
+      Request{.jsonrpc = "2.0", .method = "initialize", .id = 1}}};
   rfl::Generic result_data{std::string("ok")};
   auto encoded = dialect_->encode_result(req, result_data);
   ASSERT_TRUE(encoded.hasValue());
@@ -149,4 +136,39 @@ TEST_F(Dialect20250618Test, MakeDialect2025_06_18) {
 TEST_F(Dialect20250618Test, MakeDialectUnknownReturnsNull) {
   auto d = make_dialect("9999-99-99");
   EXPECT_EQ(d, nullptr);
+}
+
+class Dialect20251125Test : public ::testing::Test {
+ protected:
+  std::unique_ptr<ProtocolDialect> dialect_ = make_dialect_2025_11_25();
+};
+
+TEST_F(Dialect20251125Test, Version) {
+  EXPECT_EQ(dialect_->version(), "2025-11-25");
+}
+
+TEST_F(Dialect20251125Test, CapabilityRules) {
+  auto rules = dialect_->capability_rules();
+  EXPECT_TRUE(rules.supports_tools);
+  EXPECT_FALSE(rules.supports_resources);
+  EXPECT_FALSE(rules.supports_prompts);
+  EXPECT_FALSE(rules.supports_logging);
+}
+
+TEST_F(Dialect20251125Test, DecodeInitializeRequest) {
+  JsonRpcMessage msg = Request{.jsonrpc = "2.0",
+                               .method = "initialize",
+                               .id = 1,
+                               .params = rfl::Generic{rfl::Generic::Object{}}};
+  auto result = dialect_->decode(msg);
+  ASSERT_TRUE(result.hasValue());
+  EXPECT_TRUE(std::holds_alternative<McpRequest>(result.value()));
+  auto& req = std::get<McpRequest>(result.value());
+  EXPECT_TRUE(std::holds_alternative<InitializeCall>(req));
+}
+
+TEST_F(Dialect20251125Test, MakeDialect2025_11_25) {
+  auto d = make_dialect("2025-11-25");
+  ASSERT_NE(d, nullptr);
+  EXPECT_EQ(d->version(), "2025-11-25");
 }

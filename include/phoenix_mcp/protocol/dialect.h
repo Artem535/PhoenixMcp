@@ -1,11 +1,11 @@
 #ifndef PHOENIX_MCP_PROTOCOL_DIALECT_H_
 #define PHOENIX_MCP_PROTOCOL_DIALECT_H_
 
+#include <folly/Expected.h>
+
 #include <memory>
 #include <string>
 #include <variant>
-
-#include <folly/Expected.h>
 
 #include "phoenix_mcp/core/error.h"
 #include "phoenix_mcp/protocol/json_rpc_codec.h"
@@ -61,21 +61,23 @@ class ProtocolDialect {
   virtual folly::Expected<McpMessage, core::McpError> decode(
       const JsonRpcMessage& message) const = 0;
 
-  virtual folly::Expected<msg::types::Response, core::McpError>
-  encode_result(const McpRequest& request,
-                const rfl::Generic& result) const = 0;
+  virtual folly::Expected<msg::types::Response, core::McpError> encode_result(
+      const McpRequest& request, const rfl::Generic& result) const = 0;
 
-  virtual folly::Expected<msg::types::Error, core::McpError>
-  encode_error(const msg::types::RequestId& id,
-               const core::McpError& error) const = 0;
+  virtual folly::Expected<msg::types::Error, core::McpError> encode_error(
+      const msg::types::RequestId& id, const core::McpError& error) const = 0;
 
   virtual CapabilityRules capability_rules() const = 0;
 };
 
 std::unique_ptr<ProtocolDialect> make_dialect_2025_06_18();
 
-std::unique_ptr<ProtocolDialect> make_dialect(
-    const ProtocolVersion& version);
+// Latest protocol version this server speaks. Clients requesting an
+// unknown version are answered with this dialect's version per the MCP
+// negotiation rule.
+std::unique_ptr<ProtocolDialect> make_dialect_2025_11_25();
+
+std::unique_ptr<ProtocolDialect> make_dialect(const ProtocolVersion& version);
 
 }  // namespace phoenix_mcp::protocol
 

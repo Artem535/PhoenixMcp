@@ -1,11 +1,11 @@
 #include "phoenix_mcp/server/server_session.h"
 
+#include <folly/coro/BlockingWait.h>
+
 #include <chrono>
 #include <memory>
 #include <thread>
 #include <utility>
-
-#include <folly/coro/BlockingWait.h>
 
 #include "phoenix_mcp/constants/constants.hpp"
 
@@ -121,8 +121,9 @@ std::optional<rfl::Generic> ServerSession::handle_input(
       handle_input_async(request, std::move(cancel_token)));
 }
 
-folly::coro::Task<std::optional<rfl::Generic>> ServerSession::handle_input_async(
-    std::string request, folly::CancellationToken cancel_token) {
+folly::coro::Task<std::optional<rfl::Generic>>
+ServerSession::handle_input_async(std::string request,
+                                  folly::CancellationToken cancel_token) {
   auto envelope = protocol::decode_message(request);
   if (!envelope) {
     co_return encode_error_response(envelope.error(), msg::types::RequestId{});
@@ -222,8 +223,8 @@ folly::coro::Task<rfl::Generic> ServerSession::handle_request_async(
     if (is_initializing()) {
       if (initialization_deadline_passed()) {
         fail_initialization("Initialization handshake timed out");
-        co_return create_error("Initialization handshake timed out",
-                               request.id, cnt_error::Code::Invalid_request);
+        co_return create_error("Initialization handshake timed out", request.id,
+                               cnt_error::Code::Invalid_request);
       }
       co_return create_error("Waiting for 'notifications/initialized'",
                              request.id);
@@ -353,8 +354,7 @@ folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
     const msg::types::RequestId& id, folly::CancellationToken cancel_token) {
   if (!call_request.params.has_value()) {
     co_return encode_error_response(
-        core::McpError(core::ErrorCode::InvalidParams, "Invalid request"),
-        id);
+        core::McpError(core::ErrorCode::InvalidParams, "Invalid request"), id);
   }
 
   const auto& [name, arguments] = call_request.params.value();
@@ -388,7 +388,8 @@ folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
 void ServerSession::handle_cancel_notification(
     const msg::types::CancelNotification& notif) {
   if (!notif.params.has_value()) {
-    spdlog::warn("ServerSession| Malformed 'notifications/cancelled', ignoring");
+    spdlog::warn(
+        "ServerSession| Malformed 'notifications/cancelled', ignoring");
     return;
   }
 
@@ -406,16 +407,15 @@ void ServerSession::handle_cancel_notification(
 folly::Expected<std::unique_ptr<protocol::ProtocolDialect>, core::McpError>
 ServerSession::negotiate_dialect(
     const msg::types::Request& initialize_request) const {
-  auto decoded =
-      dialect_->decode(protocol::JsonRpcMessage{initialize_request});
+  auto decoded = dialect_->decode(protocol::JsonRpcMessage{initialize_request});
   if (!decoded) {
     return folly::makeUnexpected(decoded.error());
   }
 
   auto* mcp_request = std::get_if<protocol::McpRequest>(&decoded.value());
-  auto* init_call =
-      mcp_request ? std::get_if<protocol::InitializeCall>(mcp_request)
-                  : nullptr;
+  auto* init_call = mcp_request
+                        ? std::get_if<protocol::InitializeCall>(mcp_request)
+                        : nullptr;
   if (!init_call) {
     return folly::makeUnexpected(core::McpError(
         core::ErrorCode::InvalidRequest, "expected an initialize request"));
@@ -439,9 +439,15 @@ ServerSession::negotiate_dialect(
   const auto& requested_version = params.value().protocol_version.get();
   auto negotiated = protocol::make_dialect(requested_version);
   if (!negotiated) {
-    return folly::makeUnexpected(core::McpError(
-        core::ErrorCode::InvalidRequest,
-        "unsupported protocol version: " + requested_version));
+    // MCP version negotiation: an unsupported requested version is not a
+    // fatal error. The server answers with the latest version it supports
+    // and lets the client decide whether it can speak it.
+    auto latest = protocol::make_dialect_2025_11_25();
+    spdlog::warn(
+        "ServerSession| Client requested unsupported protocol version '{}'; "
+        "responding with latest supported '{}'",
+        requested_version, latest->version());
+    negotiated = std::move(latest);
   }
 
   return negotiated;
@@ -459,7 +465,7 @@ rfl::Generic ServerSession::encode_error_response(
 rfl::Generic ServerSession::make_initialize_response(
     const msg::types::RequestId& id) const {
   const msg::types::InitializeResult result{
-      .protocol_version = constants::kMcpVersion,
+      .protocol_version = dialect_->version(),
       .capabilities = server_capabilities_,
       .server_info = server_info_,
       .instruction = instruction_};
@@ -470,8 +476,8 @@ rfl::Generic ServerSession::make_initialize_response(
 }
 
 template <typename T>
-rfl::Generic ServerSession::make_response(const T& result,
-                                          const msg::types::RequestId& id) const {
+rfl::Generic ServerSession::make_response(
+    const T& result, const msg::types::RequestId& id) const {
   const msg::types::Response resp{
       .jsonrpc = "2.0", .result = rfl::to_generic(result), .id = id};
 
