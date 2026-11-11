@@ -115,6 +115,13 @@ the specification is final and has its own conformance baseline. Generated wire
 types remain implementation details; ergonomic public C++ types and handlers
 are written and versioned deliberately.
 
+Tasks (SEP-1686) are a `2025-11-25`-only capability. `ServerSession` advertises
+`tasks.list`, `tasks.cancel`, and task-augmented `tools/call` only when the
+negotiated dialect supports them and `ServerConfig::enable_tasks` is set; tasks
+are session-scoped and bounded by `ServerConfig::max_tasks` and `task_ttl`.
+When tasks are not advertised, a `tools/call` carrying `task` metadata is
+processed as an ordinary call, as the specification requires.
+
 === Server, client, and host
 
 `Server` owns server capabilities and a `SessionManager`. Every stdio connection

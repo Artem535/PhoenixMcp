@@ -191,6 +191,14 @@ class Dialect20251125 : public ProtocolDialect {
       id = list->request.flatten.get().id;
     } else if (auto* call = std::get_if<CallToolCall>(&request)) {
       id = call->request.flatten.get().id;
+    } else if (auto* get = std::get_if<GetTaskCall>(&request)) {
+      id = get->id;
+    } else if (auto* result = std::get_if<GetTaskResultCall>(&request)) {
+      id = result->id;
+    } else if (auto* cancel = std::get_if<CancelTaskCall>(&request)) {
+      id = cancel->id;
+    } else if (auto* list = std::get_if<ListTasksCall>(&request)) {
+      id = list->id;
     }
     return msg::types::Response{.jsonrpc = "2.0", .result = result, .id = id};
   }
@@ -209,7 +217,10 @@ class Dialect20251125 : public ProtocolDialect {
     return {.supports_tools = true,
             .supports_resources = false,
             .supports_prompts = false,
-            .supports_logging = false};
+            .supports_logging = false,
+            .supports_tasks = true,
+            .supports_task_list = true,
+            .supports_task_cancel = true};
   }
 
  private:
@@ -255,6 +266,40 @@ class Dialect20251125 : public ProtocolDialect {
       return result_req;
     }
 
+    if (req.method == "tasks/get" || req.method == "tasks/result" ||
+        req.method == "tasks/cancel") {
+      if (!req.params.has_value()) {
+        return folly::makeUnexpected(McpError(
+            ErrorCode::InvalidParams, "task request is missing params"));
+      }
+      auto params =
+          rfl::from_generic<msg::types::TaskIdParams>(req.params.value());
+      if (!params) {
+        return folly::makeUnexpected(McpError(ErrorCode::DeserializationFailed,
+                                              "failed to decode task params"));
+      }
+      const auto task_id = params.value().task_id.value();
+      if (req.method == "tasks/get") {
+        return McpRequest{GetTaskCall{req.id, task_id}};
+      }
+      if (req.method == "tasks/result") {
+        return McpRequest{GetTaskResultCall{req.id, task_id}};
+      }
+      return McpRequest{CancelTaskCall{req.id, task_id}};
+    }
+
+    if (req.method == "tasks/list") {
+      std::optional<std::string> cursor;
+      if (req.params.has_value()) {
+        auto params =
+            rfl::from_generic<msg::types::ListTasksParams>(req.params.value());
+        if (params) {
+          cursor = params.value().cursor;
+        }
+      }
+      return McpRequest{ListTasksCall{req.id, cursor}};
+    }
+
     return folly::makeUnexpected(
         McpError(ErrorCode::MethodNotFound, "unknown method: " + req.method));
   }
@@ -292,6 +337,17 @@ class Dialect20251125 : public ProtocolDialect {
                      "failed to decode tools list changed notification"));
       }
       return McpNotification{ToolListChangedNotificationCall{changed.value()}};
+    }
+
+    if (notif.method == "notifications/tasks/status") {
+      auto status = rfl::json::read<msg::types::TaskStatusNotification>(
+          rfl::json::write(notif));
+      if (!status) {
+        return folly::makeUnexpected(
+            McpError(ErrorCode::DeserializationFailed,
+                     "failed to decode task status notification"));
+      }
+      return McpNotification{TaskStatusNotificationCall{status.value()}};
     }
 
     return folly::makeUnexpected(McpError(

@@ -27,6 +27,22 @@ struct ListToolsCall {
 struct CallToolCall {
   msg::types::CallToolRequest request;
 };
+struct GetTaskCall {
+  msg::types::RequestId id;
+  std::string task_id;
+};
+struct GetTaskResultCall {
+  msg::types::RequestId id;
+  std::string task_id;
+};
+struct CancelTaskCall {
+  msg::types::RequestId id;
+  std::string task_id;
+};
+struct ListTasksCall {
+  msg::types::RequestId id;
+  std::optional<std::string> cursor;
+};
 struct CancelNotificationCall {
   msg::types::CancelNotification notification;
 };
@@ -36,12 +52,16 @@ struct InitializeNotificationCall {
 struct ToolListChangedNotificationCall {
   msg::types::ToolListChangedNotification notification;
 };
+struct TaskStatusNotificationCall {
+  msg::types::TaskStatusNotification notification;
+};
 
 using McpRequest =
-    std::variant<InitializeCall, PingCall, ListToolsCall, CallToolCall>;
+    std::variant<InitializeCall, PingCall, ListToolsCall, CallToolCall,
+                 GetTaskCall, GetTaskResultCall, CancelTaskCall, ListTasksCall>;
 using McpNotification =
     std::variant<CancelNotificationCall, InitializeNotificationCall,
-                 ToolListChangedNotificationCall>;
+                 ToolListChangedNotificationCall, TaskStatusNotificationCall>;
 
 using McpMessage = std::variant<McpRequest, McpNotification>;
 
@@ -50,6 +70,9 @@ struct CapabilityRules {
   bool supports_resources = false;
   bool supports_prompts = false;
   bool supports_logging = false;
+  bool supports_tasks = false;
+  bool supports_task_list = false;
+  bool supports_task_cancel = false;
 };
 
 class ProtocolDialect {
