@@ -108,10 +108,16 @@ struct InputSchema {
   OptionalParams properties;
   std::optional<std::vector<std::string>> required;
 };
+struct Icon {
+  std::string src;
+  rfl::Rename<"mimeType", std::optional<std::string>> mime_type;
+  std::optional<std::vector<std::string>> sizes;
+};
 struct Tool {
   std::string name;
   std::optional<std::string> description;
   rfl::Rename<"inputSchema", InputSchema> input_schema;
+  std::optional<std::vector<Icon>> icons;
 };
 struct ListToolsResult {
   std::vector<Tool> tools;
@@ -199,6 +205,7 @@ struct ClientCapabilities {
 struct Implementation {
   std::string name;
   std::string version;
+  std::optional<std::string> description;
 };
 struct InitializeParams {
   rfl::Rename<"protocolVersion", std::string> protocol_version;

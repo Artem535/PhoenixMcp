@@ -11,6 +11,7 @@
 #include <memory>
 #include <rfl/Generic.hpp>
 #include <rfl/json.hpp>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -101,6 +102,11 @@ class ToolRegistry {
       const std::string& name, const std::string& description,
       const AsyncCancellableToolHandler<InputParams>& handler,
       ExecutionPolicy policy = ExecutionPolicy::CpuBound) {
+    if (!is_valid_tool_name(name)) {
+      throw std::invalid_argument(
+          "ToolRegistry: invalid tool name '" + name +
+          "' (MCP names are 1-128 characters of [A-Za-z0-9_.-])");
+    }
     const auto schema_string = rfl::json::to_schema<InputParams>();
     auto schema =
         rfl::json::read<msg::types::ToolInputSchema>(schema_string).value();
@@ -164,6 +170,37 @@ class ToolRegistry {
 
   bool has_tool(const std::string& name) const {
     return tools_.find(name) != tools_.end();
+  }
+
+  /// @brief MCP tool-naming guidance (SEP-986): 1-128 characters from
+  ///        [A-Za-z0-9_.-]; tool names are case-sensitive.
+  static bool is_valid_tool_name(const std::string& name) {
+    if (name.empty() || name.size() > 128) {
+      return false;
+    }
+    for (const char character : name) {
+      const bool allowed = (character >= 'A' && character <= 'Z') ||
+                           (character >= 'a' && character <= 'z') ||
+                           (character >= '0' && character <= '9') ||
+                           character == '_' || character == '-' ||
+                           character == '.';
+      if (!allowed) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// @brief Attach icons to an already-registered tool's definition.
+  /// @return false if no tool with `name` is registered.
+  bool set_tool_icons(const std::string& name,
+                      std::vector<msg::types::Icon> icons) {
+    const auto it = tool_descriptions_.find(name);
+    if (it == tool_descriptions_.end()) {
+      return false;
+    }
+    it->second.icons = std::move(icons);
+    return true;
   }
 
  private:
