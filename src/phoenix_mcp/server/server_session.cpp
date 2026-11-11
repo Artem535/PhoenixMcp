@@ -390,18 +390,29 @@ folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
 
   const auto& params = call_request.params.value();
   const auto& name = params.name;
-  const auto& arguments = params.arguments;
+  const auto arguments = params.arguments.has_value()
+                             ? params.arguments.value()
+                             : rfl::Generic{rfl::Generic::Object{}};
 
   spdlog::debug("ServerSession::call_tool| Call tool, name: {}", name);
   spdlog::debug("ServerSession::call_tool| Call tool, args: {}",
                 rfl::json::write(arguments));
+
+  // Unknown tool names are a protocol error (Invalid params); SEP-1303 only
+  // reclassifies *input validation* failures as tool execution errors.
+  if (!tool_registry_->has_tool(name)) {
+    co_return encode_error_response(
+        core::McpError(core::ErrorCode::ToolNotFound,
+                       "Tool not found: " + name),
+        id);
+  }
 
   const PendingRequestGuard guard(cancellations_mutex_, pending_cancellations_,
                                   id, std::move(cancel_token));
 
   try {
     const auto result = co_await tool_registry_->call_tool_async(
-        name, arguments.value(), guard.token());
+        name, arguments, guard.token());
     // A tool may return normally after observing cancellation (or ignore the
     // token entirely); surface cancellation uniformly here rather than
     // trusting each tool to encode it in its own result.
@@ -411,10 +422,14 @@ folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
     }
     co_return make_response(result, id);
   } catch (const std::exception& e) {
+    // SEP-1303: tool execution failures are tool results with isError, not
+    // JSON-RPC protocol errors, so the calling model can self-correct.
     spdlog::error("ServerSession::call_tool| Tool '{}' threw: {}", name,
                   e.what());
-    co_return create_error(std::string("Tool execution failed: ") + e.what(),
-                           id, cnt_error::Code::Internal_error);
+    co_return make_response(
+        utils::make_text_result(
+            std::string("Tool execution failed: ") + e.what(), true),
+        id);
   }
 }
 
