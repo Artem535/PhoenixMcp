@@ -23,7 +23,8 @@ namespace phoenix_mcp::tool {
 
 using AsyncToolHandlerInternal =
     std::function<folly::coro::Task<msg::types::CallToolResult>(
-        const rfl::Generic& params, const folly::CancellationToken& cancel_token)>;
+        const rfl::Generic& params,
+        const folly::CancellationToken& cancel_token)>;
 
 template <typename InputParams>
 using ToolHandler =
@@ -49,7 +50,8 @@ using AsyncToolHandlerWithOutput =
 template <typename InputParams>
 using AsyncCancellableToolHandler =
     std::function<folly::coro::Task<msg::types::CallToolResult>(
-        const InputParams& params, const folly::CancellationToken& cancel_token)>;
+        const InputParams& params,
+        const folly::CancellationToken& cancel_token)>;
 
 class ToolRegistry {
  public:
@@ -87,8 +89,7 @@ class ToolRegistry {
                            ExecutionPolicy policy = ExecutionPolicy::CpuBound) {
     register_cancellable_tool<InputParams>(
         name, description,
-        [handler](const InputParams& params,
-                  const folly::CancellationToken&)
+        [handler](const InputParams& params, const folly::CancellationToken&)
             -> folly::coro::Task<msg::types::CallToolResult> {
           co_return co_await handler(params);
         },
@@ -112,12 +113,18 @@ class ToolRegistry {
     };
     tool_descriptions_[name] = tool;
     auto runtime = runtime_;
-    tools_[name] = [handler, runtime, policy](
+    tools_[name] = [handler, runtime, policy, name](
                        const rfl::Generic& generic_params,
                        const folly::CancellationToken& cancel_token)
         -> folly::coro::Task<msg::types::CallToolResult> {
-      InputParams params =
-          rfl::from_generic<InputParams>(generic_params).value();
+      auto params_result = rfl::from_generic<InputParams>(generic_params);
+      if (!params_result) {
+        co_return utils::make_text_result(
+            "Invalid arguments for tool '" + name +
+                "': " + params_result.error().what(),
+            true);
+      }
+      InputParams params = std::move(params_result.value());
       auto task = handler(params, cancel_token);
       switch (policy) {
         case ExecutionPolicy::Inline:
@@ -154,6 +161,10 @@ class ToolRegistry {
       const std::string& name, const rfl::Generic& params,
       folly::CancellationToken cancel_token = {});
   std::vector<msg::types::Tool> get_tool_list();
+
+  bool has_tool(const std::string& name) const {
+    return tools_.find(name) != tools_.end();
+  }
 
  private:
   std::map<std::string, AsyncToolHandlerInternal> tools_;

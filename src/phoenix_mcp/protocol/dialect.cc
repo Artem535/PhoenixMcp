@@ -23,6 +23,8 @@ int to_jsonrpc_code(ErrorCode code) {
       return -32000;
     case ErrorCode::AuthorizationFailed:
       return -32001;
+    case ErrorCode::ToolNotFound:
+      return -32602;
     case ErrorCode::InternalError:
     default:
       return -32603;

@@ -264,6 +264,16 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_tool_registry_test
     PRIVATE PhoenixMcp::Server GTest::gtest_main)
 
+  add_executable(phoenix_mcp_tool_registry_validation_test
+    tests/phoenix_mcp/server/tool_registry_validation_test.cc)
+  target_link_libraries(phoenix_mcp_tool_registry_validation_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
+  add_executable(phoenix_mcp_server_session_tool_errors_test
+    tests/phoenix_mcp/server/server_session_tool_errors_test.cc)
+  target_link_libraries(phoenix_mcp_server_session_tool_errors_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
   add_executable(phoenix_mcp_task_store_test
     tests/phoenix_mcp/server/task_store_test.cc)
   target_link_libraries(phoenix_mcp_task_store_test
@@ -315,6 +325,8 @@ if(PHOENIX_MCP_ENABLE_DROGON)
   gtest_discover_tests(phoenix_mcp_session_manager_test)
   gtest_discover_tests(phoenix_mcp_mcp_request_handler_test)
   gtest_discover_tests(phoenix_mcp_tool_registry_test)
+  gtest_discover_tests(phoenix_mcp_tool_registry_validation_test)
+  gtest_discover_tests(phoenix_mcp_server_session_tool_errors_test)
   gtest_discover_tests(phoenix_mcp_task_store_test)
   gtest_discover_tests(phoenix_mcp_server_session_tasks_test)
   gtest_discover_tests(phoenix_mcp_dialect_tasks_test)
