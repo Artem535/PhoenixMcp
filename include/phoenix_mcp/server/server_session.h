@@ -17,6 +17,7 @@
 #include "phoenix_mcp/protocol/dialect.h"
 #include "phoenix_mcp/protocol/message_types.h"
 #include "phoenix_mcp/server/session_states.h"
+#include "phoenix_mcp/server/task_store.h"
 #include "phoenix_mcp/tool_registry/tool_registry.h"
 
 namespace phoenix_mcp::server {
@@ -30,6 +31,18 @@ struct ServerConfig {
   std::chrono::milliseconds init_timeout{5000};
   /// Timeout for graceful shutdown settle period (default: 5s)
   std::chrono::milliseconds settle_timeout{5000};
+  /// Enable task-augmented requests (SEP-1686) when the negotiated dialect
+  /// advertises them. Default: enabled for 2025-11-25 and later.
+  bool enable_tasks = true;
+  /// Maximum number of live tasks retained per session.
+  size_t max_tasks = 64;
+  /// Default task retention and hard upper bound.
+  std::chrono::milliseconds task_ttl{600000};
+  std::chrono::milliseconds max_task_ttl{3600000};
+  /// Polling interval reported to requestors in task responses.
+  std::chrono::milliseconds task_poll_interval{1000};
+  /// Upper bound for a `tasks/result` wait on a non-terminal task.
+  std::chrono::milliseconds task_result_timeout{30000};
 };
 
 /// @brief MCP server session with formal state machine lifecycle
@@ -91,7 +104,7 @@ class ServerSession {
   ServerConfig config_;
 
   // ---- Session data ----
-  std::unique_ptr<tool::ToolRegistry> tool_registry_;
+  std::shared_ptr<tool::ToolRegistry> tool_registry_;
   msg::types::ServerCapabilities server_capabilities_;
   msg::types::Implementation server_info_;
   std::string instruction_;
@@ -103,6 +116,16 @@ class ServerSession {
   // decoded; replaced with the negotiated dialect once `initialize`
   // succeeds. Never null.
   std::unique_ptr<protocol::ProtocolDialect> dialect_;
+
+  // Task store for task-augmented requests (SEP-1686). Present only when
+  // ServerConfig::enable_tasks is set; the negotiated dialect additionally
+  // gates whether the capability is advertised and tasks/* is accepted.
+  std::shared_ptr<TaskStore> task_store_;
+
+  // Maps the `tools/call` request id that created a task to that task id, so
+  // a `notifications/cancelled` for the original request can still cancel it.
+  std::mutex task_request_mutex_;
+  std::map<std::string, std::string> request_to_task_;
 
   // ---- State machine ----
   // Declared last: the FSM context is `*this`, and the initial state's
@@ -148,6 +171,32 @@ class ServerSession {
   folly::coro::Task<rfl::Generic> call_tool_async(
       const msg::types::CallToolRequest& call_request,
       const msg::types::RequestId& id, folly::CancellationToken cancel_token);
+
+  // ---- Tasks (SEP-1686) ----
+  bool tasks_enabled() const;
+
+  // Stable key for the request-id -> task-id map used to cancel a task from
+  // `notifications/cancelled`.
+  static std::string request_id_key(const msg::types::RequestId& id);
+
+  // Starts a task for a task-augmented `tools/call` and returns the
+  // CreateTaskResult immediately; the tool runs on a detached worker.
+  rfl::Generic start_task(const msg::types::CallToolRequest& call_request,
+                          const msg::types::RequestId& id);
+
+  rfl::Generic make_task_created_response(
+      const TaskSnapshot& snapshot, const msg::types::RequestId& id) const;
+  rfl::Generic make_task_response(const TaskSnapshot& snapshot,
+                                  const msg::types::RequestId& id) const;
+
+  rfl::Generic handle_task_get(const std::string& task_id,
+                               const msg::types::RequestId& id);
+  rfl::Generic handle_task_result(const std::string& task_id,
+                                  const msg::types::RequestId& id);
+  rfl::Generic handle_task_cancel(const std::string& task_id,
+                                  const msg::types::RequestId& id);
+  rfl::Generic handle_task_list(const msg::types::RequestId& id,
+                                const std::optional<std::string>& cursor);
 
   // ---- Helpers ----
   rfl::Generic make_initialize_response(const msg::types::RequestId& id) const;

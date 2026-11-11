@@ -112,6 +112,13 @@ ServerSession::ServerSession(
       server_info_(std::move(server_info)),
       instruction_(std::move(instruction)),
       dialect_(protocol::make_dialect_2025_06_18()),
+      task_store_(config_.enable_tasks
+                      ? std::make_shared<TaskStore>(TaskStore::Options{
+                            .max_tasks = config_.max_tasks,
+                            .default_ttl = config_.task_ttl,
+                            .max_ttl = config_.max_task_ttl,
+                            .poll_interval = config_.task_poll_interval})
+                      : nullptr),
       fsm_(*this) {}
 // clang-format on
 
@@ -276,6 +283,10 @@ void ServerSession::close() {
     }
   }
 
+  if (task_store_ != nullptr) {
+    task_store_->cancel_all();
+  }
+
   while (pending_operation_count_.load(std::memory_order_relaxed) > 0 &&
          std::chrono::steady_clock::now() < settle_deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -338,8 +349,28 @@ folly::coro::Task<rfl::Generic> ServerSession::handle_operation_async(
   }
 
   if (auto* call = std::get_if<protocol::CallToolCall>(mcp_request)) {
+    if (tasks_enabled() && call->request.params.has_value() &&
+        call->request.params->task.has_value()) {
+      co_return start_task(call->request, request.id);
+    }
     co_return co_await call_tool_async(call->request, request.id,
                                        std::move(cancel_token));
+  }
+
+  if (auto* get = std::get_if<protocol::GetTaskCall>(mcp_request)) {
+    co_return handle_task_get(get->task_id, request.id);
+  }
+
+  if (auto* result = std::get_if<protocol::GetTaskResultCall>(mcp_request)) {
+    co_return handle_task_result(result->task_id, request.id);
+  }
+
+  if (auto* cancel = std::get_if<protocol::CancelTaskCall>(mcp_request)) {
+    co_return handle_task_cancel(cancel->task_id, request.id);
+  }
+
+  if (auto* list = std::get_if<protocol::ListTasksCall>(mcp_request)) {
+    co_return handle_task_list(request.id, list->cursor);
   }
 
   spdlog::error("ServerSession| Method not found: {}", request.method);
@@ -357,7 +388,9 @@ folly::coro::Task<rfl::Generic> ServerSession::call_tool_async(
         core::McpError(core::ErrorCode::InvalidParams, "Invalid request"), id);
   }
 
-  const auto& [name, arguments] = call_request.params.value();
+  const auto& params = call_request.params.value();
+  const auto& name = params.name;
+  const auto& arguments = params.arguments;
 
   spdlog::debug("ServerSession::call_tool| Call tool, name: {}", name);
   spdlog::debug("ServerSession::call_tool| Call tool, args: {}",
@@ -396,11 +429,25 @@ void ServerSession::handle_cancel_notification(
   const auto& params = notif.params.value();
   const msg_t::RequestId target_id = params.request_id.value();
 
-  std::lock_guard lock(cancellations_mutex_);
-  if (const auto it = pending_cancellations_.find(target_id);
-      it != pending_cancellations_.end()) {
-    it->second.requestCancellation();
-    spdlog::info("ServerSession| Cancellation requested for in-flight request");
+  {
+    std::lock_guard lock(cancellations_mutex_);
+    if (const auto it = pending_cancellations_.find(target_id);
+        it != pending_cancellations_.end()) {
+      it->second.requestCancellation();
+      spdlog::info(
+          "ServerSession| Cancellation requested for in-flight request");
+    }
+  }
+
+  // A task-augmented tools/call returns before its tool finishes; a cancel
+  // notification naming the original request id still cancels that task.
+  if (task_store_ != nullptr) {
+    std::lock_guard lock(task_request_mutex_);
+    const auto it = request_to_task_.find(request_id_key(target_id));
+    if (it != request_to_task_.end()) {
+      task_store_->cancel(it->second, "Cancelled by notifications/cancelled",
+                          nullptr);
+    }
   }
 }
 
@@ -464,9 +511,20 @@ rfl::Generic ServerSession::encode_error_response(
 
 rfl::Generic ServerSession::make_initialize_response(
     const msg::types::RequestId& id) const {
+  msg::types::ServerCapabilities capabilities = server_capabilities_;
+  if (tasks_enabled()) {
+    capabilities.tasks = msg::types::TasksCapabilities{
+        .list = msg::types::EmptyResult{},
+        .cancel = msg::types::EmptyResult{},
+        .requests = msg::types::TaskRequestsCapability{
+            .tools = msg::types::EmptyResult{}}};
+  } else {
+    capabilities.tasks.reset();
+  }
+
   const msg::types::InitializeResult result{
       .protocol_version = dialect_->version(),
-      .capabilities = server_capabilities_,
+      .capabilities = std::move(capabilities),
       .server_info = server_info_,
       .instruction = instruction_};
 

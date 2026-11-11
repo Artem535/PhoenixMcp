@@ -1,6 +1,7 @@
 #ifndef PHOENIX_MCP_PROTOCOL_MESSAGE_TYPES_H_
 #define PHOENIX_MCP_PROTOCOL_MESSAGE_TYPES_H_
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <rfl/Flatten.hpp>
@@ -45,6 +46,46 @@ struct Notification {
 struct MinimalNotification {
   std::string jsonrpc = "2.0";
   std::string method;
+};
+
+using TaskStatus = std::string;
+
+struct TaskMetadata {
+  std::optional<int64_t> ttl;
+};
+struct Task {
+  rfl::Rename<"taskId", std::string> task_id;
+  TaskStatus status;
+  rfl::Rename<"statusMessage", std::optional<std::string>> status_message;
+  rfl::Rename<"createdAt", std::string> created_at;
+  rfl::Rename<"lastUpdatedAt", std::string> last_updated_at;
+  std::optional<int64_t> ttl;
+  rfl::Rename<"pollInterval", std::optional<int64_t>> poll_interval;
+};
+struct CreateTaskResult {
+  Task task;
+};
+struct TaskIdParams {
+  rfl::Rename<"taskId", std::string> task_id;
+};
+struct ListTasksParams {
+  std::optional<Cursor> cursor;
+};
+struct ListTasksResult {
+  std::vector<Task> tasks;
+  rfl::Rename<"nextCursor", std::optional<Cursor>> next_cursor;
+};
+struct TaskStatusNotification {
+  rfl::Flatten<MinimalNotification> flatten;
+  Task params;
+};
+struct TaskRequestsCapability {
+  std::optional<EmptyResult> tools;
+};
+struct TasksCapabilities {
+  std::optional<EmptyResult> list;
+  std::optional<EmptyResult> cancel;
+  std::optional<TaskRequestsCapability> requests;
 };
 struct ErrorData {
   int code;
@@ -109,6 +150,7 @@ struct CallToolResult {
 struct CallToolParams {
   std::string name;
   OptionalParams arguments;
+  std::optional<TaskMetadata> task;
 };
 struct PropertySchema {
   std::string type;
@@ -152,6 +194,7 @@ struct ClientCapabilities {
   OptionalParams experimental;
   std::optional<RootsParams> roots;
   std::optional<rfl::Generic> sampling;
+  std::optional<TasksCapabilities> tasks;
 };
 struct Implementation {
   std::string name;
@@ -178,6 +221,7 @@ struct ServerCapabilities {
   std::optional<PromptsCapabilities> prompts;
   std::optional<ResourcesCapabilities> resources;
   std::optional<ToolsCapabilities> tools;
+  std::optional<TasksCapabilities> tasks;
 };
 struct InitializeResult {
   rfl::Rename<"protocolVersion", std::string> protocol_version;

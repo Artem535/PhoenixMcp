@@ -53,6 +53,8 @@ set(phoenix_mcp_sources
     src/phoenix_mcp/runtime/runtime.cpp
     src/phoenix_mcp/server/mcp_request_handler.cpp
     src/phoenix_mcp/server/server_session.cpp
+    src/phoenix_mcp/server/server_session_tasks.cpp
+    src/phoenix_mcp/server/task_store.cpp
     src/phoenix_mcp/server/session_states.cpp
     src/phoenix_mcp/server/session_manager.cpp
     src/phoenix_mcp/server/server.cpp
@@ -262,6 +264,21 @@ if(BUILD_TESTING)
   target_link_libraries(phoenix_mcp_tool_registry_test
     PRIVATE PhoenixMcp::Server GTest::gtest_main)
 
+  add_executable(phoenix_mcp_task_store_test
+    tests/phoenix_mcp/server/task_store_test.cc)
+  target_link_libraries(phoenix_mcp_task_store_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
+  add_executable(phoenix_mcp_server_session_tasks_test
+    tests/phoenix_mcp/server/server_session_tasks_test.cc)
+  target_link_libraries(phoenix_mcp_server_session_tasks_test
+    PRIVATE PhoenixMcp::Server GTest::gtest_main)
+
+  add_executable(phoenix_mcp_dialect_tasks_test
+    tests/phoenix_mcp/protocol/dialect_tasks_test.cc)
+  target_link_libraries(phoenix_mcp_dialect_tasks_test
+    PRIVATE PhoenixMcp::Protocol GTest::gtest_main)
+
   if(UNIX AND PHOENIX_MCP_ENABLE_STDIO)
     add_executable(phoenix_mcp_stdio_transport_test
       tests/phoenix_mcp/transport/stdio_transport_test.cc)
@@ -298,6 +315,9 @@ if(PHOENIX_MCP_ENABLE_DROGON)
   gtest_discover_tests(phoenix_mcp_session_manager_test)
   gtest_discover_tests(phoenix_mcp_mcp_request_handler_test)
   gtest_discover_tests(phoenix_mcp_tool_registry_test)
+  gtest_discover_tests(phoenix_mcp_task_store_test)
+  gtest_discover_tests(phoenix_mcp_server_session_tasks_test)
+  gtest_discover_tests(phoenix_mcp_dialect_tasks_test)
   if(TARGET phoenix_mcp_stdio_transport_test)
     gtest_discover_tests(phoenix_mcp_stdio_transport_test)
   endif()
